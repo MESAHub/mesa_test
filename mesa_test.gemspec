@@ -1,6 +1,6 @@
 Gem::Specification.new do |s|
   s.name = "mesa_test"
-  s.version = "0.0.3"
+  s.version = "0.0.4"
   s.author = "William Wolf"
   s.date = %q{2017-11-03}
   s.description = "mesa_test is a command-line interface for running the test suites in MESA and submitting them to the companion website MESATestHub."

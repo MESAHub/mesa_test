@@ -13,7 +13,7 @@ class MesaTest < Thor
     the same location it was read from.
   LONGDESC
   def setup(config_file=File.join(ENV['HOME'], '.mesa_test.yml'))
-    MesaTestSubmitter.new_from_config(config_file: config_file)
+    MesaTestSubmitter.new_from_config(config_file: config_file).setup
   end
 
 

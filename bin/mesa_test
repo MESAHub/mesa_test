@@ -1,0 +1,221 @@
+#! /usr/bin/env ruby
+
+require '../lib/mesa_test'
+require 'thor'
+
+class MesaTest < Thor
+
+  desc "setup [CONFIG_FILE]", "Setup MesaTestHub config file."
+  long_desc <<-LONGDESC
+    If optional CONFIG_FILE is provided, search for that file and load it
+    to provide default values for configuration. If not provided, the default
+    file, ~/.mesa_test.yml, is used. The resulting config file is saved to
+    the same location it was read from.
+  LONGDESC
+  def setup(config_file=File.join(ENV['HOME'], '.mesa_test.yml'))
+    MesaTestSubmitter.new_from_config(config_file: config_file)
+  end
+
+
+
+  desc "test_one MESA_DIR TEST_CASE", "run, check, and submit one test case"
+  long_desc <<-LONGDESC
+  Run and check TEST_CASE, which resides in MESA_DIR/star/test_suite. Then 
+  report results to MesaTestHub.
+
+  With --force option, skip confirmation of computer details, assuming values
+  in ~/.mesa_test.yml are correct.
+
+  With --log option, save yml file of test results in test directory, on
+  by default. Shut off with --no-log.
+
+  With --submit option, upload results to MESATestHub. By default, this is on.
+  To run without submission, use --no-submit.  
+  LONGDESC
+  option :force, type: :boolean
+  option :log, type: :boolean, default: true
+  option :submit, type: :boolean, default: true
+  def test_one(mesa_dir, test_case_name)
+
+    if options[:submit]
+      s = MesaTestSubmitter.new_from_config
+      unless options[:force]
+        unless s.confirm_computer_data
+          s.setup
+        end
+      end
+
+      check_user_and_computer s
+    end
+
+    # set up and check mesa directory (doesn't really check to see if it's
+    # installed, just to see if it has a version number and a test suite
+    # directory)
+    m = Mesa.new mesa_dir: mesa_dir
+    raise MesaDirError, "Invalid MESA_DIR: #{mesa_dir}. Please download and " +
+      "install a valid MESA version or provide the path to one." unless
+      m.installed?
+    m.load_test_source_data
+
+    # make sure the test case is valid
+    t = m.find_test_case test_case_name: test_case_name
+    if t.nil?
+      msg = "No such test case, #{test_case_name} found in any of "
+      msg << MesaTestCase.modules.map do |mod|
+        File.join(m.test_suite_dir(mod: mod), 'do1_test_source')
+      end.join(' or ')
+      msg << '.'
+      raise TestCaseDirError, msg
+    end
+
+    # clean and run test
+    t.clean
+    t.do_one
+
+    # log results
+    t.log_results if options[:log]
+
+    # submit results
+    if options[:submit]
+      print 'Submitting results to ' + s.base_uri + '... '
+      s.submit(t)
+      puts "Done."
+      puts ""
+    end
+  end
+
+
+  desc "test_all MESA_DIR", "run, check, and submit all test cases"
+  long_desc <<-LONGDESC
+  Run and check all test cases residing in MESA_DIR/star/test_suite. Then 
+  report results to MesaTestHub. Specifically, runs and checks all tests
+  detailed in MESA_DIR/star/test_suite/do1_test_source.
+
+  With --force option, skip confirmation of computer details, assuming values
+  in ~/.mesa_test.yml are correct. Only relevant if --submit option is on
+  (by default it is).
+
+  With --log option, save yml file of test results in test directory and a
+  summary in the test suite directory. On by default. Shut off with --no-log.
+
+  With --submit option, upload results to MESATestHub. By default, this is on.
+  To run without submission, use --no-submit.
+  LONGDESC
+  option :force, type: :boolean
+  option :log, type: :boolean, default: true
+  option :submit, type: :boolean, default: true
+  def test_all(mesa_dir)
+
+    if options[:submit]
+      s = MesaTestSubmitter.new_from_config
+      unless options[:force]
+        unless s.confirm_computer_data
+          s.setup
+        end
+      end
+      check_user_and_computer s
+    end
+    
+    # set up and check mesa directory (doesn't really check to see if it's
+    # installed, just to see if it has a version number and a test suite
+    # directory)
+    m = Mesa.new mesa_dir: mesa_dir
+    raise MesaDirError, "Invalid MESA_DIR: #{mesa_dir}. Please download and " +
+      "install a valid MESA version or provide the path to one." unless
+      m.installed?
+    m.load_test_source_data
+
+    # run all tests
+    m.each_test_run_and_diff(log_results: options[:log])
+
+    # submit all tests
+    s.submit_all(m) if options[:submit]
+  end
+
+
+  desc "install VERSION_NUMBER MESA_DIR", 'download and install mesa release '+
+    'VERSION_NUMBER to directory MESA_DIR'
+  long_desc <<-LONGDESC
+  Calls to svn to install mesa release VERSION_NUMBER into the directory 
+  MESA_DIR. Basically just an svn checkout followed by going into the directory
+  and running ./clean and ./install. SDK or compilers must be set up prior.
+  Does not affect the user's MESA_DIR or other environment variables.
+  LONGDESC
+  def install(version, mesa_dir)
+    m = Mesa.download(version_number:version, new_mesa_dir: mesa_dir)
+    m.clean
+    m.install
+  end
+
+
+  desc "install_and_run_all VERSION_NUMBER MESA_DIR", 'download and install ' +
+  'mesa release VERSION_NUMBER to directory MESA_DIR and run/submit all tests'
+  long_desc <<-LONGDESC
+  Calls to svn to install mesa release VERSION_NUMBER into the directory 
+  MESA_DIR. Basically just an svn checkout followed by going into the directory
+  and running ./clean and ./install. SDK or compilers must be set up prior.
+  Once installation is complete, run the test suite, and report results to 
+  MesaTestHub. Does not affect the user's MESA_DIR or other environmnet
+  variables. This is bascially a shortcut for running 
+
+    `mesa_test install SOME_VERSION SOME_DIR`
+
+  followed by 
+
+    `mesa_test test_all SOME_DIR`
+
+  Use flag --destroy to self destruct MESA_DIR after successful test
+  submission. Essentially does rm -rf MESA_DIR after the test suite. Useful
+  for automated testing without piling up disk space.
+
+  Use flag --force to skip confirmation of computer details if they can be
+  read from ~/.mesa_test.yml.
+  LONGDESC
+  option :destroy, type: :boolean
+  option :force, type: :boolean
+  def install_and_test_all(version, mesa_dir)
+    s = MesaTestSubmitter.new_from_config
+    unless options[:force]
+      unless s.confirm_computer_data
+        s.setup
+      end
+    end
+
+    m = Mesa.download(version_number:version, new_mesa_dir: mesa_dir)
+    m.clean
+    m.install
+
+    raise MesaDirError, "Invalid MESA_DIR: #{mesa_dir}. Please download and " +
+      "install a valid MESA version or provide the path to one." unless
+      m.installed?
+    m.load_test_source_data
+
+    # run all tests
+    m.each_test_run_and_diff
+
+    # submit all tests
+    successfully_submitted = s.submit_all(m)
+
+    # if requested, and if submission successful, destroy the directory
+    if successfully_submitted and options[:destroy]
+      m.destroy
+    end
+  end
+
+  private
+  def check_user_and_computer(submitter)
+    computer_check = submitter.confirm_computer
+    if computer_check['valid']
+      puts computer_check['message']
+    else
+      $stderr.puts computer_check['message']
+      exit 1
+    end
+  end
+
+
+end
+
+
+# actually start the CLI
+MesaTest.start(ARGV)

@@ -1,6 +1,6 @@
 #! /usr/bin/env ruby
 
-require 'mesa_test'
+require_relative '../lib/mesa_test'
 require 'thor'
 
 class MesaTest < Thor

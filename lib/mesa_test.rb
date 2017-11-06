@@ -229,7 +229,10 @@ e-mail and password will be stored in plain text.
       passed: test_case.passed?,
       compiler: compiler,
       compiler_version: compiler_version,
+      platform_version: platform_version,
       omp_num_threads: test_case.test_omp_num_threads,
+      success_type: test_case.success_type,
+      failure_type: test_case.failure_type
     }
 
     # enter in test-specific data
@@ -261,7 +264,7 @@ e-mail and password will be stored in plain text.
   # returns true if the id is in the returned JSON (indicating success)
   # otherwise returns false (maybe failed in authorization or in finding
   # computer or test case) No error thrown for failure, though.
-  def submit(test_case, verbose=false)
+  def submit(test_case, verbose=true)
     uri = URI.parse(base_uri + '/test_instances/submit.json')
     https = Net::HTTP.new(uri.hostname, uri.port)
     https.use_ssl = true if base_uri.include? 'https'
@@ -269,6 +272,9 @@ e-mail and password will be stored in plain text.
     request = Net::HTTP::Post.new(uri, 
       initheader = {'Content-Type' => 'application/json'})
     request.body = submit_params(test_case).to_json
+
+    puts "\n" if verbose
+    puts JSON.load(request.body).to_hash if verbose
 
     response = https.request request
     puts JSON.load(response.body).to_hash if verbose

@@ -148,7 +148,7 @@ class MesaTest < Thor
   end
 
 
-  desc "install_and_run_all VERSION_NUMBER MESA_DIR", 'download and install ' +
+  desc "install_and_test_all VERSION_NUMBER MESA_DIR", 'download and install ' +
   'mesa release VERSION_NUMBER to directory MESA_DIR and run/submit all tests'
   long_desc <<-LONGDESC
   Calls to svn to install mesa release VERSION_NUMBER into the directory 

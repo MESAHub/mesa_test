@@ -182,7 +182,7 @@ e-mail and password will be stored in plain text.
   # if you try different compilers
   #
   # Note this is NOT checked! The server really only uses the test-by-test
-  # quantities (platform version, compiler, complier version) and the 
+  # quantities (platform version, compiler, compiler version) and the 
   # computer name. Once the computer is found (by the name) all the other
   # data is assumed to be fixed. The others... probably shouldn't be here, 
   # but remain so you can confirm that the computer on the web server is the
@@ -329,7 +329,7 @@ class Mesa
     success = system("svn co -r #{version_number} "+
                      "svn://svn.code.sf.net/p/mesa/code/trunk #{new_mesa_dir}")
     unless success
-      raise MesaDirError, "Encountered a problem in downlaod mesa " +
+      raise MesaDirError, "Encountered a problem in download mesa " +
                           "revision #{version_number}."
     end
     Mesa.new(mesa_dir: new_mesa_dir)

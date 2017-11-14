@@ -13,12 +13,11 @@ class TestCaseDirError < StandardError; end
 class InvalidDataType < StandardError; end
 
 class MesaTestSubmitter
-
   # set up config file for computer
   def setup
     update do |s|
-      puts "This wizard will guide you through setting up a computer profile
-and default data for test case submissions to MESATestHub. You
+      shell.say 'This wizard will guide you through setting up a computer 
+profile and default data for test case submissions to MESATestHub. You
 will be able to confirm entries at the end. Default/current values are always
 shown in parentheses at the end of a prompt. Pressing enter will accept the
 default values.
@@ -26,8 +25,7 @@ default values.
 To submit to MESATestHub, a valid computer name, email address, and password
 are all required. All other data are useful, but optional. Any data
 transferred to MESATestHub will be encrypted via HTTPS, but be warned that your
-e-mail and password will be stored in plain text.
-"
+e-mail and password will be stored in plain text.'
       # Get computer name
       response = shell.ask("What is the name of this computer (required)? "+
         "(#{s.computer_name}):", color = :blue)
@@ -122,13 +120,14 @@ e-mail and password will be stored in plain text.
     @password = password || ''
     @platform = platform
     if @platform.nil?
-      @platform = if OS.osx?
-        'macOS'
-      elsif OS.linux?
-        'Linux'
-      else
-        ''
-      end
+      @platform =
+        if OS.osx?
+          'macOS'
+        elsif OS.linux?
+          'Linux'
+        else
+          ''
+        end
     end
     @platform_version = platform_version || ''
     @processor = processor || ''
@@ -282,7 +281,6 @@ e-mail and password will be stored in plain text.
   end
 
   def submit_all(mesa)
-    uri=URI.parse(base_uri + '/test_instances/submit.json')
     submitted_cases = []
     unsubmitted_cases = []
     mesa.test_names.each do |mod, test_names|
@@ -317,9 +315,7 @@ e-mail and password will be stored in plain text.
     # return true if all cases were submitted
     submitted_cases.length == mesa.test_names.length
   end
-
 end
-
 
 class Mesa
   attr_reader :mesa_dir, :test_data, :test_names, :test_cases, :shell
@@ -377,7 +373,6 @@ class Mesa
   def destroy
     FileUtils.rm_rf mesa_dir
   end
-
 
   ## TEST SUITE METHODS
 
@@ -452,9 +447,9 @@ class Mesa
     if mod == :all
       # look through all loaded modules for desired test case name, return
       # FIRST found (assuming no name duplication across modules)
-      @test_names.each do |mod, names|
-        if names.include? test_case_name
-          return @test_cases[mod][test_case_name]
+      @test_names.each do |this_mod, mod_names|
+        if mod_names.include? test_case_name
+          return @test_cases[this_mod][test_case_name]
         end
       end
       # didn't find any matches, return nil
@@ -547,7 +542,6 @@ class Mesa
   end
 end
 
-
 class MesaTestCase
   attr_reader :test_name, :mesa_dir, :mesa, :success_string, :final_model,
     :failure_msg, :success_msg, :photo, :runtime_seconds,
@@ -631,8 +625,10 @@ class MesaTestCase
   end
 
   def add_datum(datum_name, datum_type)
-    raise InvalidDataType, "Invalid data type: #{datum_type}. Must be one of "+
-      data_types.join(', ') + '.' unless data_types.include? datum_type.to_sym
+    unless data_types.include? datum_type.to_sym
+      raise InvalidDataType, "Invalid data type: #{datum_type}. Must be one "\
+        'of ' + data_types.join(', ') + '.' 
+    end
     @data[datum_name] = datum_type
     @data_names << datum_name
   end
@@ -667,8 +663,8 @@ class MesaTestCase
       FileUtils.rm_f 'binary_history.data'
       FileUtils.rm_f 'out.txt'
       if File.directory? File.join('star_history','history_out')
-        shell.say "Removing all files of the form history_out* from star_history",
-          color = :blue
+        shell.say 'Removing all files of the form history_out* from ' \
+          'star_history', :blue
         FileUtils.rm_f Dir.glob(File.join('star_history', 'history_out', '*'))
       end
       if File.directory? File.join('star_profile', 'profiles_out')
@@ -686,7 +682,7 @@ class MesaTestCase
     @test_omp_num_threads = omp_num_threads
     in_dir do
       FileUtils.touch '.running'
-      shell.say("building and running #{test_name}", color = :blue)
+      shell.say("building and running #{test_name}", :blue)
       puts ''
       build_and_run
       FileUtils.rm '.running'
@@ -772,13 +768,13 @@ class MesaTestCase
   def write_failure_message
     msg = "******************** #{failure_msg[@failure_type]} " +
       "********************" 
-    log_message(msg, color = :red)
+    log_message(msg, :red)
   end
 
   # write success message to log file
   def write_success_msg(success_type)
     msg = 'PASS ' + success_msg[success_type]
-    log_message(msg, color = :green)
+    log_message(msg, :green)
   end
 
   # used as return value for run or photo test. Logs failure to text file, and
@@ -810,8 +806,8 @@ class MesaTestCase
     # report runtime and clean up
     run_finish = Time.now
     @runtime_seconds = (run_finish - run_start).to_i
-    shell.say "Finished with ./rn; runtime = #{@runtime_seconds} seconds.",
-      color = :blue
+    shell.say("Finished with ./rn; runtime = #{@runtime_seconds} seconds.",
+      :blue)
     append_and_rm_err
 
 
@@ -855,7 +851,6 @@ class MesaTestCase
     else
       return succeed(:run_test_string)
     end
-
   end
 
   # prepare for and do restart, check results, and return pass/fail status
@@ -893,88 +888,98 @@ class MesaTestCase
     # assumes we are in the test case directory. Should only be called
     # in the context of an `in_dir` block.
 
-
     # first clean and make... worried about shell compatibility since we
     # aren't forcing bash. Hopefully '>' for redirecting output is pretty
     # universal
-    puts './clean'
-    unless system('./clean')
-      raise TestCaseDirError, "Encountered an error when running `clean` in " +
-        "#{Dir.getwd} for test case #{test_name}."
-    end
+    simple_clean
+    mk
 
-    puts './mk > mk.txt'
-    unless system('./mk > mk.txt')
-      raise TestCaseDirError, "Encountered an error when running `mk` in " +
-        "#{Dir.getwd} for test case #{test_name}."
-    end
-    FileUtils.rm 'mk.txt'
+    # remove old final model if it exists
+    remove_final_model
 
-    # remove final model if it already exists
-    unless final_model.nil?
-      FileUtils.rm final_model if File.exist? final_model
-    end
-
-    if check_run
-      # only check restart/photo if we get through run successfully
-      check_restart
-    end
+    # only check restart/photo if we get through run successfully
+    check_restart if check_run
   end
 
   # append contents of err.txt to end of out.txt, then delete err.txt
-  def append_and_rm_err(outfile='out.txt', errfile='err.txt')
-    File.open(outfile, 'a') do |f_out|
-      err_contents = File.read(errfile)
-      unless err_contents.strip.empty?
-        shell.say "\nERRORS", color = :red
-        puts err_contents
-        shell.say "END OF ERRORS (appended to #{outfile})", color = :red
-        puts ''
-        f_out.write(err_contents)
-      end
-    end
+  def append_and_rm_err(outfile = 'out.txt', errfile = 'err.txt')
+    err_contents = File.read(errfile)
+    display_errors(err_contents)
+    log_errors(err_contents, outfile)
     FileUtils.rm errfile
   end
 
-end
+  def display_errors(err_contents)
+    return unless err_contents.strip.empty?
+    shell.say("\nERRORS", :red)
+    puts err_contents
+    shell.say("END OF ERRORS", :red)
+  end
 
+  def log_errors(err_contents, outfile)
+    File.open(outfile, 'a') { |f_out| f_out.write(err_contents) }
+    shell.say("appended to #{outfile})\n", :red)
+  end
+
+  def simple_clean
+    puts './clean'
+    unless system('./clean')
+      raise TestCaseDirError, 'Encountered an error when running `clean` in ' +
+        "#{Dir.getwd} for test case #{test_name}."
+    end
+  end
+
+  def mk
+    puts './mk > mk.txt'
+    unless system('./mk > mk.txt')
+      raise TestCaseDirError, 'Encountered an error when running `mk` in ' +
+        "#{Dir.getwd} for test case #{test_name}."
+    end
+    FileUtils.rm 'mk.txt'
+  end
+
+  def remove_final_model
+    # remove final model if it already exists
+    return unless final_model
+    return unless File.exist?(final_model)
+    FileUtils.rm(final_model)
+  end
+end
 
 ################################
 #       GENERAL METHODS        #
 ################################
-
 
 # cd into a new directory, execute a block whose return value is either
 # true or false. Either way, cd back to original directory. Raise an
 # exception if the block failed (returned false or nil)
 def visit_and_check(new_dir, exception, message)
   cwd = Dir.getwd
-  shell.say "Leaving  #{cwd}", color = :blue
-  puts ""
-  shell.say "Entering #{new_dir}.", color = :blue
+  shell.say "Leaving  #{cwd}", :blue
+  puts ''
+  shell.say "Entering #{new_dir}.", :blue
   Dir.chdir(new_dir)
   success = yield if block_given?
-  shell.say "Leaving  #{new_dir}", color = :blue
-  puts ""
-  shell.say "Entering #{cwd}.", color = :blue
+  shell.say "Leaving  #{new_dir}", :blue
+  puts ''
+  shell.say "Entering #{cwd}.", :blue
   Dir.chdir(cwd)
-  unless success
-    raise exception, message
-  end
+  return unless success
+  raise exception, message
 end
 
 # cd into a new directory, execute a block, then cd back into original
 # directory
 def visit_dir(new_dir)
   cwd = Dir.getwd
-  shell.say "Leaving  #{cwd}", color = :blue
+  shell.say "Leaving  #{cwd}", :blue
   puts ""
-  shell.say "Entering #{new_dir}.", color = :blue
+  shell.say "Entering #{new_dir}.", :blue
   Dir.chdir(new_dir)
   yield if block_given?
-  shell.say "Leaving  #{new_dir}", color = :blue
+  shell.say "Leaving  #{new_dir}", :blue
   puts ""
-  shell.say "Entering #{cwd}.", color = :blue
+  shell.say "Entering #{cwd}.", :blue
   Dir.chdir(cwd)
 end
 
@@ -991,12 +996,13 @@ def generate_seeds_rb(mesa_dir, outfile)
       f.puts "      version_added: #{m.version_number},"
       # no comma on last one
       if test_case_name == m.test_names[-1]
-        f.puts "    }"
+        f.puts('    }')
       else
-        f.puts "    },"
+        f.puts('    }')
       end
     end
     f.puts '  ]'
     f.puts ')'
   end
 end
+

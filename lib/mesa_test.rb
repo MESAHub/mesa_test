@@ -256,28 +256,30 @@ e-mail and password will be stored in plain text.'
       computer_name: computer_name
     }.to_json
 
-    JSON.load(https.request(request).body).to_hash
+    JSON.parse(https.request(request).body).to_hash
   end
 
   # attempt to post to MesaTestHub with test_case parameters
   # returns true if the id is in the returned JSON (indicating success)
   # otherwise returns false (maybe failed in authorization or in finding
   # computer or test case) No error thrown for failure, though.
-  def submit(test_case, verbose=true)
+  def submit(test_case, verbose = false)
     uri = URI.parse(base_uri + '/test_instances/submit.json')
     https = Net::HTTP.new(uri.hostname, uri.port)
     https.use_ssl = true if base_uri.include? 'https'
 
-    request = Net::HTTP::Post.new(uri, 
-      initheader = {'Content-Type' => 'application/json'})
+    request = Net::HTTP::Post.new(
+      uri,
+      initheader = { 'Content-Type' => 'application/json' }
+    )
     request.body = submit_params(test_case).to_json
 
-    puts "\n" if verbose
-    puts JSON.load(request.body).to_hash if verbose
+    # puts "\n" if verbose
+    # puts JSON.parse(request.body).to_hash if verbose
 
     response = https.request request
-    puts JSON.load(response.body).to_hash if verbose
-    not response.kind_of? Net::HTTPUnprocessableEntity
+    # puts JSON.parse(response.body).to_hash if verbose
+    !response.is_a? Net::HTTPUnprocessableEntity
   end
 
   def submit_all(mesa)
@@ -479,9 +481,8 @@ class Mesa
     each_test_clean(mod: mod)
 
     if mod == :all
-      MesaTestCase.modules.each do
-        |this_mod| each_test_run_and_diff(mod: this_mod,
-          log_results: log_results)
+      MesaTestCase.modules.each do |this_mod|
+        each_test_run_and_diff(mod: this_mod, log_results: log_results)
       end
     else
       test_names[mod].each do |test_name|
@@ -489,6 +490,18 @@ class Mesa
         test_cases[mod][test_name].log_results if log_results
       end
       log_summary if log_results
+    end
+  end
+
+  def each_test_load_results(mod: :all)
+    if mod == :all
+      MesaTestCase.modules.each do |this_mod|
+        each_test_load_results(mod: this_mod)
+      end
+    else
+      test_names[mod].each do |test_name|
+        test_cases[mod][test_name].load_results
+      end
     end
   end
 

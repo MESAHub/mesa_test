@@ -4,7 +4,6 @@ require_relative '../lib/mesa_test'
 require 'thor'
 
 class MesaTest < Thor
-
   desc "setup [CONFIG_FILE]", "Setup MesaTestHub config file."
   long_desc <<-LONGDESC
     If optional CONFIG_FILE is provided, search for that file and load it
@@ -15,8 +14,6 @@ class MesaTest < Thor
   def setup(config_file=File.join(ENV['HOME'], '.mesa_test.yml'))
     MesaTestSubmitter.new_from_config(config_file: config_file).setup
   end
-
-
 
   desc "test_one MESA_DIR TEST_CASE", "run, check, and submit one test case"
   long_desc <<-LONGDESC
@@ -36,7 +33,6 @@ class MesaTest < Thor
   option :log, type: :boolean, default: true
   option :submit, type: :boolean, default: true
   def test_one(mesa_dir, test_case_name)
-
     if options[:submit]
       s = MesaTestSubmitter.new_from_config
       unless options[:force]
@@ -130,6 +126,86 @@ class MesaTest < Thor
 
     # submit all tests
     s.submit_all(m) if options[:submit]
+  end
+
+  desc 'submit_one MESA_DIR TEST_CASE', 'submit one completed test case'
+  long_desc <<-LONGDESC
+  Load complete test case data from existing YAML file and submit to MESA
+
+  With --force option, skip confirmation of computer details, assuming values
+  in ~/.mesa_test.yml are correct.
+  LONGDESC
+  option :force, type: :boolean
+  def submit_one(mesa_dir, test_case_name)
+    s = MesaTestSubmitter.new_from_config
+    unless options[:force]
+      s.setup unless s.confirm_computer_data
+    end
+
+    check_user_and_computer s
+
+    # set up and check mesa directory (doesn't really check to see if it's
+    # installed, just to see if it has a version number and a test suite
+    # directory)
+    m = Mesa.new mesa_dir: mesa_dir
+    unless m.installed?
+      raise MesaDirError, "Invalid MESA_DIR: #{mesa_dir}. Please download " \
+      'and install a valid MESA version or provide the path to one.'
+    end
+    m.load_test_source_data
+
+    # make sure the test case is valid
+    t = m.find_test_case test_case_name: test_case_name
+    if t.nil?
+      msg = "No such test case, #{test_case_name} found in any of "
+      msg << MesaTestCase.modules.map do |mod|
+        File.join(m.test_suite_dir(mod: mod), 'do1_test_source')
+      end.join(' or ')
+      msg << '.'
+      raise TestCaseDirError, msg
+    end
+
+    # load test results
+    t.load_results
+
+    # submit results
+    print 'Submitting results to ' + s.base_uri + '... '
+    s.submit(t)
+    puts "Done.\n"
+  end
+
+  desc 'submit_all MESA_DIR', 'submit all [previously run] test cases'
+  long_desc <<-LONGDESC
+  Load results for all test cases residing in MESA_DIR/star/test_suite. Then
+  submit results to MesaTestHub. Specifically, loads and submits all tests
+  detailed in MESA_DIR/star/test_suite/do1_test_source.
+
+  With --force option, skip confirmation of computer details, assuming values
+  in ~/.mesa_test.yml are correct.
+  LONGDESC
+  option :force, type: :boolean
+  def submit_all(mesa_dir)
+    s = MesaTestSubmitter.new_from_config
+    unless options[:force]
+      s.setup unless s.confirm_computer_data
+    end
+    check_user_and_computer s
+
+    # set up and check mesa directory (doesn't really check to see if it's
+    # installed, just to see if it has a version number and a test suite
+    # directory)
+    m = Mesa.new mesa_dir: mesa_dir
+    unless m.installed?
+      raise MesaDirError, "Invalid MESA_DIR: #{mesa_dir}. Please download " \
+      'and install a valid MESA version or provide the path to one.'
+    end
+    m.load_test_source_data
+
+    # run all tests
+    m.each_test_load_results
+
+    # submit all tests
+    s.submit_all(m)
   end
 
 

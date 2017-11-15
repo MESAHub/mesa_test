@@ -1,7 +1,7 @@
 #! /usr/bin/env ruby
 
-# require_relative '../lib/mesa_test'
-require 'mesa_test'
+require_relative '../lib/mesa_test'
+# require 'mesa_test'
 require 'thor'
 
 class MesaTest < Thor
@@ -16,30 +16,37 @@ class MesaTest < Thor
     MesaTestSubmitter.new_from_config(config_file: config_file).setup
   end
 
-  desc "test_one MESA_DIR TEST_CASE", "run, check, and submit one test case"
+  desc 'test_one MESA_DIR TEST_CASE', "run, check, and submit one test case"
   long_desc <<-LONGDESC
-  Run and check TEST_CASE, which resides in MESA_DIR/star/test_suite. Then 
-  report results to MesaTestHub.
+  Run and check TEST_CASE, which resides in MESA_DIR/star/test_suite. Then
+  report results to MesaTestHub. TEST_CASE can also be an integer corresponding
+  to the line number of the test name in its do1_test_source file (or a 
+  concatenated version of that file if no module is specified). Modules are
+  searched/concatenated in this order:
+
+  #{MesaTestCase.modules.map { |mod| '    ' + mod.to_s }.join(', ')}
 
   With --force option, skip confirmation of computer details, assuming values
   in ~/.mesa_test.yml are correct.
+
+  With --module option, select which module to search through, with the default
+  being "all" (search all modules in order). Example: --module=star.
 
   With --log option, save yml file of test results in test directory, on
   by default. Shut off with --no-log.
 
   With --submit option, upload results to MESATestHub. By default, this is on.
-  To run without submission, use --no-submit.  
+  To run without submission, use --no-submit.
   LONGDESC
-  option :force, type: :boolean
+  option :force, type: :boolean, aliases: '-f'
   option :log, type: :boolean, default: true
+  option :module, type: :string, default: :all
   option :submit, type: :boolean, default: true
   def test_one(mesa_dir, test_case_name)
     if options[:submit]
       s = MesaTestSubmitter.new_from_config
       unless options[:force]
-        unless s.confirm_computer_data
-          s.setup
-        end
+        s.setup unless s.confirm_computer_data
       end
 
       check_user_and_computer s
@@ -55,7 +62,8 @@ class MesaTest < Thor
     m.load_test_source_data
 
     # make sure the test case is valid
-    t = m.find_test_case test_case_name: test_case_name
+    t = m.find_test_case(test_case_name: test_case_name,
+                         mod: options[:module].downcase.to_sym)
     if t.nil?
       msg = "No such test case, #{test_case_name} found in any of "
       msg << MesaTestCase.modules.map do |mod|
@@ -84,7 +92,7 @@ class MesaTest < Thor
 
   desc "test_all MESA_DIR", "run, check, and submit all test cases"
   long_desc <<-LONGDESC
-  Run and check all test cases residing in MESA_DIR/star/test_suite. Then 
+  Run and check all test cases residing in MESA_DIR/star/test_suite. Then
   report results to MesaTestHub. Specifically, runs and checks all tests
   detailed in MESA_DIR/star/test_suite/do1_test_source.
 
@@ -98,7 +106,7 @@ class MesaTest < Thor
   With --submit option, upload results to MESATestHub. By default, this is on.
   To run without submission, use --no-submit.
   LONGDESC
-  option :force, type: :boolean
+  option :force, type: :boolean, aliases: '-f'
   option :log, type: :boolean, default: true
   option :submit, type: :boolean, default: true
   def test_all(mesa_dir)
@@ -131,12 +139,21 @@ class MesaTest < Thor
 
   desc 'submit_one MESA_DIR TEST_CASE', 'submit one completed test case'
   long_desc <<-LONGDESC
-  Load complete test case data from existing YAML file and submit to MESA
+  Load complete test case data from existing YAML file and submit to MESA.
+  TEST_CASE can also be an integer corresponding to the line number of the test
+  name in its do1_test_source file (or a concatenated version of that file if
+  no module is specified). Modules are searched/concatenated in this order:
+
+  #{MesaTestCase.modules.map { |mod| '    ' + mod.to_s }.join(", ") }
 
   With --force option, skip confirmation of computer details, assuming values
   in ~/.mesa_test.yml are correct.
+
+  With --module option, select which module to search through, with the default
+  being "all". Example: --module=star.
   LONGDESC
-  option :force, type: :boolean
+  option :force, type: :boolean, aliases: '-f'
+  option :module, type: :string, aliases: '-m', default: 'all'
   def submit_one(mesa_dir, test_case_name)
     s = MesaTestSubmitter.new_from_config
     unless options[:force]
@@ -156,7 +173,8 @@ class MesaTest < Thor
     m.load_test_source_data
 
     # make sure the test case is valid
-    t = m.find_test_case test_case_name: test_case_name
+    t = m.find_test_case(test_case_name: test_case_name,
+                         mod: options[:module].downcase.to_sym)
     if t.nil?
       msg = "No such test case, #{test_case_name} found in any of "
       msg << MesaTestCase.modules.map do |mod|
@@ -184,7 +202,7 @@ class MesaTest < Thor
   With --force option, skip confirmation of computer details, assuming values
   in ~/.mesa_test.yml are correct.
   LONGDESC
-  option :force, type: :boolean
+  option :force, type: :boolean, aliases: '-f'
   def submit_all(mesa_dir)
     s = MesaTestSubmitter.new_from_config
     unless options[:force]
@@ -249,7 +267,7 @@ class MesaTest < Thor
   read from ~/.mesa_test.yml.
   LONGDESC
   option :destroy, type: :boolean
-  option :force, type: :boolean
+  option :force, type: :boolean, aliase: '-f'
   def install_and_test_all(version, mesa_dir)
     s = MesaTestSubmitter.new_from_config
     unless options[:force]

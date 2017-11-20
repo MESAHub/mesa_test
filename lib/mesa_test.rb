@@ -91,8 +91,9 @@ e-mail and password will be stored in plain text.'
 
   def self.new_from_config(
     config_file: File.join(ENV['HOME'], '.mesa_test.yml'), force_setup: false,
-    base_uri: 'https://mesa-test-hub.herokuapp.com')
-    new_submitter = self.new(config_file: config_file, base_uri: base_uri)
+    base_uri: 'https://mesa-test-hub.herokuapp.com'
+  )
+    new_submitter = new(config_file: config_file, base_uri: base_uri)
     if force_setup
       new_submitter.setup
     elsif not File.exist? config_file
@@ -110,9 +111,11 @@ e-mail and password will be stored in plain text.'
   attr_reader :shell
 
   # many defaults are set in body
-  def initialize(computer_name: nil, user_name: nil, email: nil, platform: nil,
+  def initialize(
+      computer_name: nil, user_name: nil, email: nil, platform: nil,
       platform_version: nil, processor: nil, ram_gb: nil, compiler: nil,
-      compiler_version: nil, config_file: nil, base_uri: nil)
+      compiler_version: nil, config_file: nil, base_uri: nil
+  )
     @computer_name = computer_name || Socket.gethostname.scan(/^[^\.]+\.?/)[0]
     @computer_name.chomp!('.') if @computer_name
     @user_name = user_name || (ENV['USER'] || ENV['USERNAME'])
@@ -150,26 +153,23 @@ e-mail and password will be stored in plain text.'
   end
 
   def confirm_computer_data
-    puts "Ready to submit the following data:"
-    puts "-------------------------------------------------------"
+    puts 'Ready to submit the following data:'
+    puts '-------------------------------------------------------'
     puts "Computer Name           #{computer_name}"
     puts "User Name               #{user_name}"
     puts "User email              #{email}"
-    puts "Password                ***********"
+    puts 'Password                ***********'
     puts "Platform                #{platform} #{platform_version}"
     puts "Processor               #{processor}"
     puts "RAM                     #{ram_gb} GB"
     puts "Compiler                #{compiler} #{compiler_version}"
     puts "Config location         #{config_file}"
-    puts "-------------------------------------------------------"
-    puts ""
+    puts '-------------------------------------------------------'
+    puts ''
     shell = Thor.new
-    response = shell.ask "Is this correct? (y/Y = Yes, anything else = No):"
-    if response.strip.downcase == 'y'
-      return true
-    else
-      return false
-    end
+    response = shell.ask 'Is this correct? (y/Y = Yes, anything else = No):'
+    return true if response.strip.casecmp 'y'
+    false
   end
 
   # For one "computer" on the web server, and for [subjective] consistency
@@ -181,39 +181,39 @@ e-mail and password will be stored in plain text.'
   # if you try different compilers
   #
   # Note this is NOT checked! The server really only uses the test-by-test
-  # quantities (platform version, compiler, compiler version) and the 
+  # quantities (platform version, compiler, compiler version) and the
   # computer name. Once the computer is found (by the name) all the other
-  # data is assumed to be fixed. The others... probably shouldn't be here, 
+  # data is assumed to be fixed. The others... probably shouldn't be here,
   # but remain so you can confirm that the computer on the web server is the
   # same one you think you are working with locally.
   def save_computer_data
     data_hash = {
-      computer_name: computer_name,
-      user_name: user_name,
-      email: email,
-      password: password,
-      platform: platform,
-      processor: processor,
-      ram_gb: ram_gb,
-      platform_version: platform_version,
-      compiler: compiler,
-      compiler_version: compiler_version      
+      'computer_name' => computer_name,
+      'user_name' => user_name,
+      'email' => email,
+      'password' => password,
+      'platform' => platform,
+      'processor' => processor,
+      'ram_gb' => ram_gb,
+      'platform_version' => platform_version,
+      'compiler' => compiler,
+      'compiler_version' => compiler_version      
     }
     File.open(config_file, 'w') { |f| f.write(YAML.dump(data_hash))}
   end
 
   def load_computer_data
-    data_hash = YAML::load(File.read(config_file))
-    @computer_name = data_hash[:computer_name]
-    @user_name = data_hash[:user_name]
-    @email = data_hash[:email]
-    @password = data_hash[:password]
-    @platform = data_hash[:platform]
-    @processor = data_hash[:processor]
-    @ram_gb = data_hash[:ram_gb]
-    @platform_version = data_hash[:platform_version]
-    @compiler = data_hash[:compiler]
-    @compiler_version = data_hash[:compiler_version]
+    data_hash = YAML.safe_load(File.read(config_file), [Symbol])
+    @computer_name = data_hash['computer_name']
+    @user_name = data_hash['user_name']
+    @email = data_hash['email']
+    @password = data_hash['password']
+    @platform = data_hash['platform']
+    @processor = data_hash['processor']
+    @ram_gb = data_hash['ram_gb']
+    @platform_version = data_hash['platform_version']
+    @compiler = data_hash['compiler']
+    @compiler_version = data_hash['compiler_version']
   end
 
   # create and return hash of parameters for a TestInstance submission
@@ -248,9 +248,10 @@ e-mail and password will be stored in plain text.'
     https = Net::HTTP.new(uri.hostname, uri.port)
     https.use_ssl = true if base_uri.include? 'https'
 
-    request = Net::HTTP::Post.new(uri, 
-      initheader = { 'Content-Type' => 'application/json' })
-    request.body = { 
+    request = Net::HTTP::Post.new(
+      uri, initheader = { 'Content-Type' => 'application/json' }
+    )
+    request.body = {
       email: email,
       password: password,
       computer_name: computer_name
@@ -263,7 +264,7 @@ e-mail and password will be stored in plain text.'
   # returns true if the id is in the returned JSON (indicating success)
   # otherwise returns false (maybe failed in authorization or in finding
   # computer or test case) No error thrown for failure, though.
-  def submit(test_case, verbose = false)
+  def submit(test_case)
     uri = URI.parse(base_uri + '/test_instances/submit.json')
     https = Net::HTTP.new(uri.hostname, uri.port)
     https.use_ssl = true if base_uri.include? 'https'
@@ -272,8 +273,15 @@ e-mail and password will be stored in plain text.'
       uri,
       initheader = { 'Content-Type' => 'application/json' }
     )
-    request.body = submit_params(test_case).to_json
+    begin
+      request.body = submit_params(test_case).to_json
+    rescue TestCaseDirError
+      shell.say "\nPassage status for #{test_case.test_name} not yet known. " \
+                'Run test first and then submit.', :red
+      return false
+    end
 
+    # verbose = true
     # puts "\n" if verbose
     # puts JSON.parse(request.body).to_hash if verbose
 
@@ -303,15 +311,15 @@ e-mail and password will be stored in plain text.'
       end
     end
     puts ''
-    if submitted_cases.length > 0
-      shell.say "Submitted the following cases:", color = :green
+    if submitted_cases.empty?
+      shell.say 'Submitted the following cases:', :green
       puts submitted_cases.join("\n")
     else
-      shell.say "Did not successfully submit any cases.", color = :red
+      shell.say 'Did not successfully submit any cases.', :red
     end
-    if unsubmitted_cases.length > 0
-      puts "\n\n\n"    
-      shell.say "Failed to submit the following cases:", color = :red
+    if unsubmitted_cases.empty?
+      puts "\n\n\n"
+      shell.say 'Failed to submit the following cases:', :red
       puts unsubmitted_cases.join("\n")
     end
     # return true if all cases were submitted
@@ -355,19 +363,25 @@ class Mesa
   end
 
   def clean
-    visit_and_check mesa_dir, MesaDirError, "Encountered a problem in " +
-      "running `clean` in #{mesa_dir}." do
-      puts './clean'
-      system('./clean')
+    with_MESA_DIR do
+      visit_and_check mesa_dir, MesaDirError, "Encountered a problem in " +
+                                "running `clean` in #{mesa_dir}." do
+        puts 'MESA_DIR = ' + ENV['MESA_DIR']
+        puts './clean'
+        system('./clean')
+      end
     end
     self
   end
 
   def install
-    visit_and_check mesa_dir, MesaDirError, "Encountered a problem in " +
-      "running `install` in #{mesa_dir}." do
-      puts './install'
-      system('./install')
+    with_MESA_DIR do
+      visit_and_check mesa_dir, MesaDirError, "Encountered a problem in " +
+                                "running `install` in #{mesa_dir}." do
+        puts 'MESA_DIR = ' + ENV['MESA_DIR']
+        puts './install'
+        system('./install')
+      end
     end
     self
   end
@@ -509,6 +523,24 @@ class Mesa
       res = res and File.directory? test_suite_dir(mod: mod)
     end 
     res
+  end
+
+  # change MESA_DIR for the execution of the block and then revert to the
+  # original value
+  def with_MESA_DIR
+    # change MESA_DIR, holding on to old value
+    orig_mesa_dir = ENV['MESA_DIR']
+    ENV['MESA_DIR'] = mesa_dir
+    shell.say "Temporarily changed MESA_DIR to #{ENV['MESA_DIR']}.", :blue
+
+    # do the stuff
+    begin
+      yield
+    # make sure we undo MESA_DIR change
+    ensure
+      ENV['MESA_DIR'] = orig_mesa_dir
+      shell.say "Changed MESA_DIR back to #{ENV['MESA_DIR']}.", :blue
+    end
   end
 
   def log_summary(mod: :all)
@@ -769,6 +801,10 @@ class MesaTestCase
     # purposes
     load_file = File.join(test_case_dir, 'test_results.yml')
     shell.say "Loading data from #{load_file}...", :blue
+    unless File.exist? load_file
+      shell.say "No such file: #{load_file}. No data loaded.", :red
+      return
+    end
     data = YAML.safe_load(File.read(load_file), [Symbol])
     @runtime_seconds = data['runtime_seconds']
     @mesa_version = data['mesa_version']
@@ -1005,7 +1041,7 @@ def visit_and_check(new_dir, exception, message)
   puts ''
   shell.say "Entering #{cwd}.", :blue
   Dir.chdir(cwd)
-  return unless success
+  return if success
   raise exception, message
 end
 

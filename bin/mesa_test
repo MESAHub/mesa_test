@@ -5,15 +5,16 @@ require 'mesa_test'
 require 'thor'
 
 class MesaTest < Thor
-  desc "setup [CONFIG_FILE]", "Setup MesaTestHub config file."
+  desc 'setup [CONFIG_FILE]', 'Setup MesaTestHub config file.'
   long_desc <<-LONGDESC
     If optional CONFIG_FILE is provided, search for that file and load it
     to provide default values for configuration. If not provided, the default
     file, ~/.mesa_test.yml, is used. The resulting config file is saved to
     the same location it was read from.
   LONGDESC
-  def setup(config_file=File.join(ENV['HOME'], '.mesa_test.yml'))
-    MesaTestSubmitter.new_from_config(config_file: config_file).setup
+  def setup(config_file = File.join(ENV['HOME'], '.mesa_test.yml'))
+    MesaTestSubmitter.new_from_config(config_file: config_file,
+                                      force_setup: true)
   end
 
   desc 'test_one MESA_DIR TEST_CASE', "run, check, and submit one test case"

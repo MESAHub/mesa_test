@@ -1,8 +1,8 @@
 Gem::Specification.new do |s|
   s.name = 'mesa_test'
-  s.version = '0.0.8'
+  s.version = '0.0.9'
   s.author = 'William Wolf'
-  s.date = '2017-11-14'
+  s.date = '2017-11-20'
   s.description = 'mesa_test is a command-line interface for running the ' \
     'test suites in MESA and submitting them to the companion website ' \
     'MESATestHub.'

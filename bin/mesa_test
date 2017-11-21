@@ -28,8 +28,8 @@ class MesaTest < Thor
   #{MesaTestCase.modules.map { |mod| '    ' + mod.to_s }.join(', ')}
 
   With --diff option, assume the checksums are up-to-date (behave like
-  each_test_run_and_diff).  Otherwise, update checksums after ./rn
-  (behave like each_test_run).
+  each_test_run_and_diff), on by default.  To update checksums after ./rn
+  (behave like each_test_run), use --no-diff.
 
   With --force option, skip confirmation of computer details, assuming values
   in ~/.mesa_test.yml are correct.
@@ -43,7 +43,7 @@ class MesaTest < Thor
   With --submit option, upload results to MESATestHub. By default, this is on.
   To run without submission, use --no-submit.
   LONGDESC
-  option :diff, type: :boolean, aliases: '-d'
+  option :diff, type: :boolean, default: true
   option :force, type: :boolean, aliases: '-f'
   option :log, type: :boolean, default: true
   option :module, type: :string, default: :all
@@ -106,8 +106,8 @@ class MesaTest < Thor
   detailed in MESA_DIR/star/test_suite/do1_test_source.
 
   With --diff option, assume the checksums are up-to-date (behave like
-  each_test_run_and_diff).  Otherwise, update checksums after ./rn
-  (behave like each_test_run).
+  each_test_run_and_diff), on by default.  To update checksums after ./rn
+  (behave like each_test_run), use --no-diff.
 
   With --force option, skip confirmation of computer details, assuming values
   in ~/.mesa_test.yml are correct. Only relevant if --submit option is on
@@ -119,7 +119,7 @@ class MesaTest < Thor
   With --submit option, upload results to MESATestHub. By default, this is on.
   To run without submission, use --no-submit.
   LONGDESC
-  option :diff, type: :boolean, aliases: '-d'
+  option :diff, type: :boolean, default: true
   option :force, type: :boolean, aliases: '-f'
   option :log, type: :boolean, default: true
   option :submit, type: :boolean, default: true

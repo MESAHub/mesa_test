@@ -329,6 +329,7 @@ end
 
 class Mesa
   attr_reader :mesa_dir, :test_data, :test_names, :test_cases, :shell
+  attr_accessor :update_checksums
 
   def self.download(version_number: nil, new_mesa_dir: nil)
     new_mesa_dir ||= File.join(ENV['HOME'], 'mesa-test-r' + version_number.to_s)
@@ -343,6 +344,7 @@ class Mesa
 
   def initialize(mesa_dir: ENV['MESA_DIR'])
     @mesa_dir = mesa_dir
+    @update_checksums = false
 
     # these get populated by calling #load_test_data
     @test_data = {}
@@ -909,19 +911,22 @@ class MesaTestCase
     # no final model to check, and we already found the test string, so pass
     return succeed(:run_test_string) unless final_model
 
-    # additional checks for final model, if it is specified
-    # update checks after new run (Bill W. doesn't know what this does)
-    # (is this supposed to mark things as passed? The original function
-    # just has a standard "return" statement, which I interpret as passing)
-    if ENV.include? 'UPDATE_CHECKS'
-      system("md5sum \"#{final_model}\" > checks.md5")
-      puts "md5sum \"#{final_model}\" > checks.md5"
-      FileUtils.cp final_model 'final_check.mod'
-      return true
-    end
-
     # display runtime message
     puts IO.readlines('out.txt').select { |line| line.scan(/runtime/i) }[-1]
+
+    # update checksums
+    #
+    # if this is true, behave like each_test_run.  update the checksum
+    # after rn and then check it matches after re
+    #
+    # if this is false, behave like each_test_run_and_diff.  assume
+    # the checksum is up-to-date and check it matches after rn and re.
+    if @mesa.update_checksums
+      system("md5sum \"#{final_model}\" > checks.md5")
+      puts "md5sum \"#{final_model}\" > checks.md5"
+      FileUtils.cp final_model, 'final_check.mod'
+      return true
+    end
 
     # check that final model matches
     puts './ck >& final_check_diff.txt'

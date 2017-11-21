@@ -104,9 +104,9 @@ e-mail and password will be stored in plain text.'
     return new_submitter
   end
 
-  attr_accessor :computer_name, :user_name, :email, :password, :platform, 
-    :platform_version, :processor, :ram_gb, :compiler, :compiler_version,
-    :config_file, :base_uri
+  attr_accessor :computer_name, :user_name, :email, :password, :platform,
+                :platform_version, :processor, :ram_gb, :compiler,
+                :compiler_version, :config_file, :base_uri
 
   attr_reader :shell
 
@@ -225,7 +225,7 @@ e-mail and password will be stored in plain text.'
       password: password,
       runtime_seconds: test_case.runtime_seconds,
       mesa_version: test_case.mesa_version,
-      passed: test_case.passed?,
+      passed: test_case.passed? ? 1 : 0,
       compiler: compiler,
       compiler_version: compiler_version,
       platform_version: platform_version,

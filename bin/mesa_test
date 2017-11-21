@@ -251,8 +251,8 @@ class MesaTest < Thor
   MESA_DIR. Basically just an svn checkout followed by going into the directory
   and running ./clean and ./install. SDK or compilers must be set up prior.
   Once installation is complete, run the test suite, and report results to 
-  MesaTestHub. Does not affect the user's MESA_DIR or other environmnet
-  variables. This is bascially a shortcut for running 
+  MesaTestHub. Does not affect the user's MESA_DIR or other environment
+  variables. This is basically a shortcut for running 
 
     `mesa_test install SOME_VERSION SOME_DIR`
 
@@ -268,7 +268,7 @@ class MesaTest < Thor
   read from ~/.mesa_test.yml.
   LONGDESC
   option :destroy, type: :boolean
-  option :force, type: :boolean, aliase: '-f'
+  option :force, type: :boolean, aliases: '-f'
   def install_and_test_all(version, mesa_dir)
     s = MesaTestSubmitter.new_from_config
     unless options[:force]

@@ -923,7 +923,14 @@ class MesaTestCase
       system("md5sum \"#{final_model}\" > checks.md5")
       puts "md5sum \"#{final_model}\" > checks.md5"
       FileUtils.cp final_model, 'final_check.mod'
-      return true
+
+      if not photo
+        # if there's no photo, we won't check the checksum, so we've succeeded
+        return succeed(:run_test_string)
+      else
+        # if there is a photo, we'll have to wait and see
+        return true
+      end
     end
 
     # check that final model matches

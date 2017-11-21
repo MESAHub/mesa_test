@@ -287,7 +287,7 @@ e-mail and password will be stored in plain text.'
 
     response = https.request request
     # puts JSON.parse(response.body).to_hash if verbose
-    !response.is_a? Net::HTTPUnprocessableEntity
+    response.is_a? Net::HTTPCreated
   end
 
   def submit_all(mesa)

@@ -309,13 +309,13 @@ e-mail and password will be stored in plain text.'
       end
     end
     puts ''
-    if submitted_cases.empty?
+    if not submitted_cases.empty?
       shell.say 'Submitted the following cases:', :green
       puts submitted_cases.join("\n")
     else
       shell.say 'Did not successfully submit any cases.', :red
     end
-    if unsubmitted_cases.empty?
+    if not unsubmitted_cases.empty?
       puts "\n\n\n"
       shell.say 'Failed to submit the following cases:', :red
       puts unsubmitted_cases.join("\n")

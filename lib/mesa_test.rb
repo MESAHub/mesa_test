@@ -679,7 +679,7 @@ class MesaTestCase
       run_checksum: "#{test_name} run: checksum for #{final_model} matches " \
         'after ./rn',
       photo_checksum: "#{test_name} restart: checksum for #{final_model} " \
-        'matches after ./re #{photo}'
+        "matches after ./re #{photo}"
     }
 
     # validate stuff

@@ -27,56 +27,56 @@ are all required. All other data are useful, but optional. Any data
 transferred to MESATestHub will be encrypted via HTTPS, but be warned that your
 e-mail and password will be stored in plain text.'
       # Get computer name
-      response = shell.ask("What is the name of this computer (required)? "+
-        "(#{s.computer_name}):", color = :blue)
+      response = shell.ask('What is the name of this computer (required)? ' \
+        "(#{s.computer_name}):", :blue)
       s.computer_name = response unless response.empty?
 
       # Get user name
-      response = shell.ask "What is the name of the operator of this " +
-        "computer? (#{s.user_name}):", color = :blue
+      response = shell.ask 'What is the name of the operator of this ' \
+        "computer? (#{s.user_name}):", :blue
       s.user_name = response unless response.empty?
 
       # Get user e-mail
-      response = shell.ask "What is the email you can be reached " +
-        "at (required)? (#{s.email}):", color = :blue
+      response = shell.ask 'What is the email you can be reached ' \
+        "at (required)? (#{s.email}):", :blue
       s.email = response unless response.empty?
 
       # Get user password
-      response = shell.ask "What is the password associated with the email " +
-        "#{s.email} (required)? (#{s.password})", color = :blue
+      response = shell.ask 'What is the password associated with the email ' \
+        "#{s.email} (required)? (#{s.password})", :blue
       s.password = response unless response.empty?
 
       # Get platform information
-      response = shell.ask "What is the platform of this computer (eg. " +
-        "macOS, Ubuntu)? (#{s.platform}):", color = :blue
+      response = shell.ask 'What is the platform of this computer (eg. ' \
+        "macOS, Ubuntu)? (#{s.platform}):", :blue
       s.platform = response unless response.empty?
-      response = shell.ask "What is the version of the platform (eg. 10.13, "+
-        "16.04)? (#{s.platform_version}):", color = :blue
+      response = shell.ask 'What is the version of the platform (eg. 10.13, ' \
+        "16.04)? (#{s.platform_version}):", :blue
       s.platform_version = response unless response.empty?
 
       # Get processor information
-      response = shell.ask "What type of processor does this computer have " +
-        "(eg. 3.1 GHz Intel i7)? (#{s.processor}):", color = :blue
+      response = shell.ask 'What type of processor does this computer have ' \
+        "(eg. 3.1 GHz Intel i7)? (#{s.processor}):", :blue
       s.processor = response unless response.empty?
 
       # Get ram information
-      response = shell.ask "How much RAM (in integer GB) does this computer " +
-        "have (eg. 8)? (#{s.ram_gb}) ", color = :blue
+      response = shell.ask 'How much RAM (in integer GB) does this computer ' \
+        "have (eg. 8)? (#{s.ram_gb}) ", :blue
       s.ram_gb = response.to_i unless response.empty?
 
       # Get compiler information
-      response = shell.ask "Which compiler are you using? (#{s.compiler}):", 
-        color = :blue, limited_to: ['', 'SDK', 'gfortran', 'ifort']
-      s.compiler = response unless response.empty? 
+      response = shell.ask "Which compiler are you using? (#{s.compiler}):",
+                           :blue, limited_to: ['', 'SDK', 'gfortran', 'ifort']
+      s.compiler = response unless response.empty?
 
       # Get compiler version
-      response = shell.ask "What version of the compiler (eg. 20170921 or " +
-        "7.2.0)? (#{s.compiler_version}): ", color = :blue
+      response = shell.ask 'What version of the compiler (eg. 20170921 or ' \
+        "7.2.0)? (#{s.compiler_version}): ", :blue
       s.compiler_version = response unless response.empty?
 
       # Confirm save location
-      response = shell.ask "This will be saved in #{s.config_file}. Press " +
-        "enter to accept or enter a new location:", color = :blue, path: true
+      response = shell.ask "This will be saved in #{s.config_file}. Press " \
+        'enter to accept or enter a new location:', :blue, path: true
       s.config_file = response unless response.empty?
     end
 
@@ -166,10 +166,8 @@ e-mail and password will be stored in plain text.'
     puts "Config location         #{config_file}"
     puts '-------------------------------------------------------'
     puts ''
-    shell = Thor.new
     response = shell.ask 'Is this correct? (y/Y = Yes, anything else = No):'
-    return true if response.strip.casecmp 'y'
-    false
+    response.strip.casecmp('y') == 0
   end
 
   # For one "computer" on the web server, and for [subjective] consistency

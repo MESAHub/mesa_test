@@ -27,6 +27,10 @@ class MesaTest < Thor
 
   #{MesaTestCase.modules.map { |mod| '    ' + mod.to_s }.join(', ')}
 
+  With --diff option, assume the checksums are up-to-date (behave like
+  each_test_run_and_diff), on by default.  To update checksums after ./rn
+  (behave like each_test_run), use --no-diff.
+
   With --force option, skip confirmation of computer details, assuming values
   in ~/.mesa_test.yml are correct.
 
@@ -39,6 +43,7 @@ class MesaTest < Thor
   With --submit option, upload results to MESATestHub. By default, this is on.
   To run without submission, use --no-submit.
   LONGDESC
+  option :diff, type: :boolean, default: true
   option :force, type: :boolean, aliases: '-f'
   option :log, type: :boolean, default: true
   option :module, type: :string, default: :all
@@ -61,6 +66,9 @@ class MesaTest < Thor
       "install a valid MESA version or provide the path to one." unless
       m.installed?
     m.load_test_source_data
+
+    # choose whether to update checksums
+    m.update_checksums = !options[:diff]
 
     # make sure the test case is valid
     t = m.find_test_case(test_case_name: test_case_name,
@@ -97,6 +105,10 @@ class MesaTest < Thor
   report results to MesaTestHub. Specifically, runs and checks all tests
   detailed in MESA_DIR/star/test_suite/do1_test_source.
 
+  With --diff option, assume the checksums are up-to-date (behave like
+  each_test_run_and_diff), on by default.  To update checksums after ./rn
+  (behave like each_test_run), use --no-diff.
+
   With --force option, skip confirmation of computer details, assuming values
   in ~/.mesa_test.yml are correct. Only relevant if --submit option is on
   (by default it is).
@@ -107,6 +119,7 @@ class MesaTest < Thor
   With --submit option, upload results to MESATestHub. By default, this is on.
   To run without submission, use --no-submit.
   LONGDESC
+  option :diff, type: :boolean, default: true
   option :force, type: :boolean, aliases: '-f'
   option :log, type: :boolean, default: true
   option :submit, type: :boolean, default: true
@@ -132,6 +145,7 @@ class MesaTest < Thor
     m.load_test_source_data
 
     # run all tests
+    m.update_checksums = !options[:diff]
     m.each_test_run_and_diff(log_results: options[:log])
 
     # submit all tests

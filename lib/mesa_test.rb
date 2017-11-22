@@ -92,6 +92,7 @@ e-mail and password will be stored in plain text.'
   def self.new_from_config(
     config_file: File.join(ENV['HOME'], '.mesa_test.yml'), force_setup: false,
     base_uri: 'https://mesa-test-hub.herokuapp.com'
+    # base_uri: 'http://localhost:3000'
   )
     new_submitter = new(config_file: config_file, base_uri: base_uri)
     if force_setup
@@ -195,9 +196,9 @@ e-mail and password will be stored in plain text.'
       'ram_gb' => ram_gb,
       'platform_version' => platform_version,
       'compiler' => compiler,
-      'compiler_version' => compiler_version      
+      'compiler_version' => compiler_version
     }
-    File.open(config_file, 'w') { |f| f.write(YAML.dump(data_hash))}
+    File.open(config_file, 'w') { |f| f.write(YAML.dump(data_hash)) }
   end
 
   def load_computer_data
@@ -218,6 +219,7 @@ e-mail and password will be stored in plain text.'
   def submit_params(test_case)
     res = {
       test_case: test_case.test_name,
+      mod: test_case.mod,
       computer: computer_name,
       email: email,
       password: password,
@@ -232,19 +234,19 @@ e-mail and password will be stored in plain text.'
       failure_type: test_case.failure_type
     }
 
-    # enter in test-specific data
-    test_case.data_names.each do |data_name|
-      unless test_case.data[data_name].nil?
-        res[data_name] = test_case.data[data_name]
-      end
-    end
+    # enter in test-specific data, DISABLED FOR NOW
+    # test_case.data_names.each do |data_name|
+    #   unless test_case.data[data_name].nil?
+    #     res[data_name] = test_case.data[data_name]
+    #   end
+    # end
     res
   end
 
   def confirm_computer
     uri = URI.parse(base_uri + '/check_computer.json')
     https = Net::HTTP.new(uri.hostname, uri.port)
-    https.use_ssl = true if base_uri.include? 'https'
+    https.use_ssl = base_uri.include? 'https'
 
     request = Net::HTTP::Post.new(
       uri, initheader = { 'Content-Type' => 'application/json' }
@@ -634,7 +636,7 @@ end
 class MesaTestCase
   attr_reader :test_name, :mesa_dir, :mesa, :success_string, :final_model,
               :failure_msg, :success_msg, :photo, :runtime_seconds,
-              :test_omp_num_threads, :mesa_version, :shell
+              :test_omp_num_threads, :mesa_version, :shell, :mod
   attr_accessor :data_names, :data_types, :failure_type, :success_type,
                 :outcome
 
@@ -785,6 +787,7 @@ class MesaTestCase
     shell.say "Logging test results to #{save_file}...", :blue
     res = {
       'test_case' => test_name,
+      'module' => mod,
       'runtime_seconds' => runtime_seconds,
       'mesa_version' => mesa_version,
       'outcome' => outcome,
@@ -807,6 +810,7 @@ class MesaTestCase
     end
     data = YAML.safe_load(File.read(load_file), [Symbol])
     @runtime_seconds = data['runtime_seconds']
+    @mod = data['module']
     @mesa_version = data['mesa_version']
     @outcome = data['outcome'].to_sym
     @test_omp_num_threads = data['omp_num_threads']

@@ -16,7 +16,7 @@ class MesaTestSubmitter
   # set up config file for computer
   def setup
     update do |s|
-      shell.say 'This wizard will guide you through setting up a computer 
+      shell.say 'This wizard will guide you through setting up a computer
 profile and default data for test case submissions to MESATestHub. You
 will be able to confirm entries at the end. Default/current values are always
 shown in parentheses at the end of a prompt. Pressing enter will accept the
@@ -355,8 +355,23 @@ class Mesa
     @shell = Thor::Shell::Color.new
   end
 
-  # read version number from $MESA_DIR/data/version_number
   def version_number
+    # prefer svn's reported version number
+    version = svn_version_number
+    # fall back to MESA_DIR/data's version number svn didn't work
+    version = data_version_number unless version > 0
+    version
+  end
+
+  # get version number from svn (preferred method)
+  def svn_version_number
+    return `svnversion #{mesa_dir}`.strip.to_i
+  rescue Errno::ENOENT
+    return 0
+  end
+
+  # read version number from $MESA_DIR/data/version_number
+  def data_version_number
     contents = ''
     File.open(File.join(mesa_dir, 'data', 'version_number'), 'r') do |f|
       contents = f.read

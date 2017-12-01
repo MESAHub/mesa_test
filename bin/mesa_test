@@ -17,11 +17,11 @@ class MesaTest < Thor
                                       force_setup: true)
   end
 
-  desc 'test_one MESA_DIR TEST_CASE', "run, check, and submit one test case"
+  desc 'test_one MESA_DIR TEST_CASE', 'run, check, and submit one test case'
   long_desc <<-LONGDESC
   Run and check TEST_CASE, which resides in MESA_DIR/star/test_suite. Then
   report results to MesaTestHub. TEST_CASE can also be an integer corresponding
-  to the line number of the test name in its do1_test_source file (or a 
+  to the line number of the test name in its do1_test_source file (or a
   concatenated version of that file if no module is specified). Modules are
   searched/concatenated in this order:
 
@@ -49,38 +49,10 @@ class MesaTest < Thor
   option :module, type: :string, default: :all
   option :submit, type: :boolean, default: true
   def test_one(mesa_dir, test_case_name)
-    if options[:submit]
-      s = MesaTestSubmitter.new_from_config
-      unless options[:force]
-        s.setup unless s.confirm_computer_data
-      end
-
-      check_user_and_computer s
-    end
-
-    # set up and check mesa directory (doesn't really check to see if it's
-    # installed, just to see if it has a version number and a test suite
-    # directory)
-    m = Mesa.new mesa_dir: mesa_dir
-    raise MesaDirError, "Invalid MESA_DIR: #{mesa_dir}. Please download and " +
-      "install a valid MESA version or provide the path to one." unless
-      m.installed?
-    m.load_test_source_data
-
-    # choose whether to update checksums
-    m.update_checksums = !options[:diff]
-
-    # make sure the test case is valid
-    t = m.find_test_case(test_case_name: test_case_name,
-                         mod: options[:module].downcase.to_sym)
-    if t.nil?
-      msg = "No such test case, #{test_case_name} found in any of "
-      msg << MesaTestCase.modules.map do |mod|
-        File.join(m.test_suite_dir(mod: mod), 'do1_test_source')
-      end.join(' or ')
-      msg << '.'
-      raise TestCaseDirError, msg
-    end
+    s = create_and_check_submitter(force: options[:force]) if options[:submit]
+    m = create_and_check_mesa(mesa_dir: mesa_dir, diff: options[:diff])
+    t = create_and_check_test_case(mesa: m, test_case_name: test_case_name,
+                                   mod: options[:module].downcase.to_sym)
 
     # clean and run test
     t.clean
@@ -89,17 +61,16 @@ class MesaTest < Thor
     # log results
     t.log_results if options[:log]
 
+    # bail out if not submitting
+    return unless options[:submit]
+
     # submit results
-    if options[:submit]
-      print 'Submitting results to ' + s.base_uri + '... '
-      s.submit(t)
-      puts "Done."
-      puts ""
-    end
+    print 'Submitting results to ' + s.base_uri + '... '
+    s.submit(t)
+    puts "Done.\n"
   end
 
-
-  desc "test_all MESA_DIR", "run, check, and submit all test cases"
+  desc 'test_all MESA_DIR', 'run, check, and submit all test cases'
   long_desc <<-LONGDESC
   Run and check all test cases residing in MESA_DIR/star/test_suite. Then
   report results to MesaTestHub. Specifically, runs and checks all tests
@@ -124,28 +95,10 @@ class MesaTest < Thor
   option :log, type: :boolean, default: true
   option :submit, type: :boolean, default: true
   def test_all(mesa_dir)
-
-    if options[:submit]
-      s = MesaTestSubmitter.new_from_config
-      unless options[:force]
-        unless s.confirm_computer_data
-          s.setup
-        end
-      end
-      check_user_and_computer s
-    end
-    
-    # set up and check mesa directory (doesn't really check to see if it's
-    # installed, just to see if it has a version number and a test suite
-    # directory)
-    m = Mesa.new mesa_dir: mesa_dir
-    raise MesaDirError, "Invalid MESA_DIR: #{mesa_dir}. Please download and " +
-      "install a valid MESA version or provide the path to one." unless
-      m.installed?
-    m.load_test_source_data
+    s = create_and_check_submitter(force: options[:force]) if options[:submit]
+    m = create_and_check_mesa(mesa_dir: mesa_dir, diff: options[:diff])
 
     # run all tests
-    m.update_checksums = !options[:diff]
     m.each_test_run_and_diff(log_results: options[:log])
 
     # submit all tests
@@ -159,7 +112,7 @@ class MesaTest < Thor
   name in its do1_test_source file (or a concatenated version of that file if
   no module is specified). Modules are searched/concatenated in this order:
 
-  #{MesaTestCase.modules.map { |mod| '    ' + mod.to_s }.join(", ") }
+  #{MesaTestCase.modules.map { |mod| '    ' + mod.to_s }.join(', ')}
 
   With --force option, skip confirmation of computer details, assuming values
   in ~/.mesa_test.yml are correct.
@@ -170,35 +123,10 @@ class MesaTest < Thor
   option :force, type: :boolean, aliases: '-f'
   option :module, type: :string, aliases: '-m', default: 'all'
   def submit_one(mesa_dir, test_case_name)
-    s = MesaTestSubmitter.new_from_config
-    unless options[:force]
-      s.setup unless s.confirm_computer_data
-    end
-
-    check_user_and_computer s
-
-    # set up and check mesa directory (doesn't really check to see if it's
-    # installed, just to see if it has a version number and a test suite
-    # directory)
-    m = Mesa.new mesa_dir: mesa_dir
-    unless m.installed?
-      raise MesaDirError, "Invalid MESA_DIR: #{mesa_dir}. Please download " \
-      'and install a valid MESA version or provide the path to one.'
-    end
-    m.load_test_source_data
-
-    # make sure the test case is valid
-    t = m.find_test_case(test_case_name: test_case_name,
-                         mod: options[:module].downcase.to_sym)
-    if t.nil?
-      msg = "No such test case, #{test_case_name} found in any of "
-      msg << MesaTestCase.modules.map do |mod|
-        File.join(m.test_suite_dir(mod: mod), 'do1_test_source')
-      end.join(' or ')
-      msg << '.'
-      raise TestCaseDirError, msg
-    end
-
+    s = create_and_check_submitter(force: options[:force])
+    m = create_and_check_mesa(mesa_dir: mesa_dir)
+    t = create_and_check_test_case(mesa: m, test_case_name: test_case_name,
+                                   mod: options[:module].downcase.to_sym)
     # load test results
     t.load_results
 
@@ -219,21 +147,8 @@ class MesaTest < Thor
   LONGDESC
   option :force, type: :boolean, aliases: '-f'
   def submit_all(mesa_dir)
-    s = MesaTestSubmitter.new_from_config
-    unless options[:force]
-      s.setup unless s.confirm_computer_data
-    end
-    check_user_and_computer s
-
-    # set up and check mesa directory (doesn't really check to see if it's
-    # installed, just to see if it has a version number and a test suite
-    # directory)
-    m = Mesa.new mesa_dir: mesa_dir
-    unless m.installed?
-      raise MesaDirError, "Invalid MESA_DIR: #{mesa_dir}. Please download " \
-      'and install a valid MESA version or provide the path to one.'
-    end
-    m.load_test_source_data
+    s = create_and_check_submitter(force: force)
+    m = create_and_check_mesa(mesa_dir: mesa_dir)
 
     # run all tests
     m.each_test_load_results
@@ -242,37 +157,39 @@ class MesaTest < Thor
     s.submit_all(m)
   end
 
-
-  desc "install VERSION_NUMBER MESA_DIR", 'download and install mesa release '+
+  desc 'install VERSION_NUMBER MESA_DIR', 'download and install mesa release '\
     'VERSION_NUMBER to directory MESA_DIR'
   long_desc <<-LONGDESC
-  Calls to svn to install mesa release VERSION_NUMBER into the directory 
+  Calls to svn to install mesa release VERSION_NUMBER into the directory
   MESA_DIR. Basically just an svn checkout followed by going into the directory
   and running ./clean and ./install. SDK or compilers must be set up prior.
   Does not affect the user's MESA_DIR or other environment variables.
   LONGDESC
   def install(version, mesa_dir)
-    m = Mesa.download(version_number:version, new_mesa_dir: mesa_dir)
+    m = Mesa.download(version_number: version, new_mesa_dir: mesa_dir)
     m.clean
     m.install
   end
 
-
-  desc "install_and_test_all VERSION_NUMBER MESA_DIR", 'download and install ' +
+  desc 'install_and_test_all VERSION_NUMBER MESA_DIR', 'download and install '\
   'mesa release VERSION_NUMBER to directory MESA_DIR and run/submit all tests'
   long_desc <<-LONGDESC
-  Calls to svn to install mesa release VERSION_NUMBER into the directory 
+  Calls to svn to install mesa release VERSION_NUMBER into the directory
   MESA_DIR. Basically just an svn checkout followed by going into the directory
   and running ./clean and ./install. SDK or compilers must be set up prior.
-  Once installation is complete, run the test suite, and report results to 
+  Once installation is complete, run the test suite, and report results to
   MesaTestHub. Does not affect the user's MESA_DIR or other environment
-  variables. This is basically a shortcut for running 
+  variables. This is basically a shortcut for running
 
     `mesa_test install SOME_VERSION SOME_DIR`
 
-  followed by 
+  followed by
 
     `mesa_test test_all SOME_DIR`
+
+  With --diff option, assume the checksums are up-to-date (behave like
+  each_test_run_and_diff), on by default.  To update checksums after ./rn
+  (behave like each_test_run), use --no-diff.
 
   Use flag --destroy to self destruct MESA_DIR after successful test
   submission. Essentially does rm -rf MESA_DIR after the test suite. Useful
@@ -281,24 +198,17 @@ class MesaTest < Thor
   Use flag --force to skip confirmation of computer details if they can be
   read from ~/.mesa_test.yml.
   LONGDESC
+  option :diff, type: :boolean, default: true
   option :destroy, type: :boolean
   option :force, type: :boolean, aliases: '-f'
   def install_and_test_all(version, mesa_dir)
-    s = MesaTestSubmitter.new_from_config
-    unless options[:force]
-      unless s.confirm_computer_data
-        s.setup
-      end
-    end
+    s = create_and_check_submitter(force: options[:force])
 
-    m = Mesa.download(version_number:version, new_mesa_dir: mesa_dir)
+    m = Mesa.download(version_number: version, new_mesa_dir: mesa_dir)
     m.clean
     m.install
 
-    raise MesaDirError, "Invalid MESA_DIR: #{mesa_dir}. Please download and " +
-      "install a valid MESA version or provide the path to one." unless
-      m.installed?
-    m.load_test_source_data
+    m = create_and_check_mesa(mesa_dir: mesa_dir, diff: options[:diff])
 
     # run all tests
     m.each_test_run_and_diff
@@ -307,12 +217,11 @@ class MesaTest < Thor
     successfully_submitted = s.submit_all(m)
 
     # if requested, and if submission successful, destroy the directory
-    if successfully_submitted and options[:destroy]
-      m.destroy
-    end
+    m.destroy if successfully_submitted && options[:destroy]
   end
 
   private
+
   def check_user_and_computer(submitter)
     computer_check = submitter.confirm_computer
     if computer_check['valid']
@@ -323,9 +232,43 @@ class MesaTest < Thor
     end
   end
 
+  def create_and_check_submitter(force: false)
+    s = MesaTestSubmitter.new_from_config
+    unless force
+      s.setup unless s.confirm_computer_data
+    end
+    check_user_and_computer s
+    s
+  end
 
+  def create_and_check_mesa(mesa_dir:, diff: true)
+    m = Mesa.new mesa_dir: mesa_dir
+    unless m.installed?
+      raise MesaDirError, "Invalid MESA_DIR: #{mesa_dir}. Please download " \
+      'and install a valid MESA version or provide the path to one.'
+    end
+    m.load_test_source_data
+
+    # choose whether to update checksums
+    m.update_checksums = !diff
+    m
+  end
+
+  def create_and_check_test_case(mesa:, test_case_name:, mod: :all)
+    t = mesa.find_test_case(test_case_name: test_case_name, mod: mod)
+    # return test case if it was found
+    return t unless t.nil?
+    # test case was not found. Throw an error.
+    msg = "No such test case, #{test_case_name} found in any of "
+    # this should care about the value in `mod`. Current behavior is only
+    # appropriate if `mod` is :all.
+    msg << MesaTestCase.modules.map do |this_mod|
+      File.join(m.test_suite_dir(mod: this_mod), 'do1_test_source')
+    end.join(' or ')
+    msg << '.'
+    raise TestCaseDirError, msg
+  end
 end
-
 
 # actually start the CLI
 MesaTest.start(ARGV)

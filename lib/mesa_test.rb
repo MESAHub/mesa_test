@@ -168,7 +168,7 @@ e-mail and password will be stored in plain text.'
     puts '-------------------------------------------------------'
     puts ''
     response = shell.ask 'Is this correct? (y/Y = Yes, anything else = No):'
-    response.strip.casecmp('y') == 0
+    response.strip.casecmp('y').zero?
   end
 
   # For one "computer" on the web server, and for [subjective] consistency
@@ -299,10 +299,7 @@ e-mail and password will be stored in plain text.'
         test_case = mesa.test_cases[mod][test_name]
         # try to submit and note if it does or doesn't successfully submit
         submitted = false
-        unless test_case.outcome == :not_tested
-          submitted = submit(test_case)
-        end
-
+        submitted = submit(test_case) unless test_case.outcome == :not_tested
         if submitted
           submitted_cases << test_name
         else
@@ -311,13 +308,13 @@ e-mail and password will be stored in plain text.'
       end
     end
     puts ''
-    if not submitted_cases.empty?
+    if !submitted_cases.empty?
       shell.say 'Submitted the following cases:', :green
       puts submitted_cases.join("\n")
     else
       shell.say 'Did not successfully submit any cases.', :red
     end
-    if not unsubmitted_cases.empty?
+    unless unsubmitted_cases.empty?
       puts "\n\n\n"
       shell.say 'Failed to submit the following cases:', :red
       puts unsubmitted_cases.join("\n")
@@ -333,10 +330,10 @@ class Mesa
 
   def self.download(version_number: nil, new_mesa_dir: nil)
     new_mesa_dir ||= File.join(ENV['HOME'], 'mesa-test-r' + version_number.to_s)
-    success = system("svn co -r #{version_number} "+
+    success = system("svn co -r #{version_number} " \
                      "svn://svn.code.sf.net/p/mesa/code/trunk #{new_mesa_dir}")
     unless success
-      raise MesaDirError, "Encountered a problem in download mesa " +
+      raise MesaDirError, 'Encountered a problem in download mesa ' \
                           "revision #{version_number}."
     end
     Mesa.new(mesa_dir: new_mesa_dir)
@@ -380,8 +377,8 @@ class Mesa
   end
 
   def clean
-    with_MESA_DIR do
-      visit_and_check mesa_dir, MesaDirError, "Encountered a problem in " +
+    with_mesa_dir do
+      visit_and_check mesa_dir, MesaDirError, 'E\countered a problem in ' \
                                 "running `clean` in #{mesa_dir}." do
         puts 'MESA_DIR = ' + ENV['MESA_DIR']
         puts './clean'
@@ -392,8 +389,8 @@ class Mesa
   end
 
   def install
-    with_MESA_DIR do
-      visit_and_check mesa_dir, MesaDirError, "Encountered a problem in " +
+    with_mesa_dir do
+      visit_and_check mesa_dir, MesaDirError, 'Encountered a problem in ' \
                                 "running `install` in #{mesa_dir}." do
         puts 'MESA_DIR = ' + ENV['MESA_DIR']
         puts './install'
@@ -412,7 +409,7 @@ class Mesa
   def check_mod(mod)
     return if MesaTestCase.modules.include? mod
     raise TestCaseDirError, "Invalid module: #{mod}. Must be one of: " +
-      MesaTestCase.modules.join(', ')
+                            MesaTestCase.modules.join(', ')
   end
 
   def test_suite_dir(mod: nil)
@@ -469,9 +466,10 @@ class Mesa
       # make MesaTestCase objects accessible by name
       @test_names[mod].each do |test_name|
         data = @test_data[mod][test_name]
-        @test_cases[mod][test_name] = MesaTestCase.new(test: test_name,
-          mesa: self, success_string: data[:success_string], mod: mod,
-          final_model: data[:final_model], photo: data[:photo])
+        @test_cases[mod][test_name] = MesaTestCase.new(
+          test: test_name, mesa: self, success_string: data[:success_string],
+          mod: mod, final_model: data[:final_model], photo: data[:photo]
+        )
       end
     end
   end
@@ -537,14 +535,14 @@ class Mesa
   def check_mesa_dir
     res = File.exist?(File.join(mesa_dir, 'data', 'version_number'))
     MesaTestCase.modules.each do |mod|
-      res = res and File.directory? test_suite_dir(mod: mod)
-    end 
+      res &&= File.directory?(test_suite_dir(mod: mod))
+    end
     res
   end
 
   # change MESA_DIR for the execution of the block and then revert to the
   # original value
-  def with_MESA_DIR
+  def with_mesa_dir
     # change MESA_DIR, holding on to old value
     orig_mesa_dir = ENV['MESA_DIR']
     ENV['MESA_DIR'] = mesa_dir
@@ -582,7 +580,7 @@ class Mesa
       end
       summary_file = File.join(test_suite_dir(mod: mod), 'test_summary.yml')
       File.open(summary_file, 'w') do |f|
-        f.write(YAML::dump(res))
+        f.write(YAML.dump(res))
       end
     end
   end
@@ -943,13 +941,10 @@ class MesaTestCase
       puts "md5sum \"#{final_model}\" > checks.md5"
       FileUtils.cp final_model, 'final_check.mod'
 
-      if not photo
-        # if there's no photo, we won't check the checksum, so we've succeeded
-        return succeed(:run_test_string)
-      else
-        # if there is a photo, we'll have to wait and see
-        return true
-      end
+      # if there's no photo, we won't check the checksum, so we've succeeded
+      return succeed(:run_test_string) unless photo
+      # if there is a photo, we'll have to wait and see
+      true
     end
 
     # check that final model matches

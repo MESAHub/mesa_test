@@ -12,7 +12,12 @@ MesaDirError = Class.new(StandardError)
 TestCaseDirError = Class.new(StandardError)
 InvalidDataType = Class.new(StandardError)
 
+Commit = Struct.new(:revision, :author, :datetime, :message)
+DEFAULT_REVISION = 10_000
+
 class MesaTestSubmitter
+  DEFAULT_URI = 'https://mesa-test-hub.herokuapp.com'.freeze
+
   # set up config file for computer
   def setup
     update do |s|
@@ -74,6 +79,12 @@ e-mail and password will be stored in plain text.'
         "7.2.0)? (#{s.compiler_version}): ", :blue
       s.compiler_version = response unless response.empty?
 
+      # Get earliest revision to check
+      response = shell.ask "What's the earliest revision to search back to " \
+        'when finding the latest testable revision (eg. 10000)? ' \
+        "(#{s.last_tested}): ", :blue
+      s.last_tested = response.to_i unless response.empty?
+
       # Confirm save location
       response = shell.ask "This will be saved in #{s.config_file}. Press " \
         'enter to accept or enter a new location:', :blue, path: true
@@ -91,7 +102,7 @@ e-mail and password will be stored in plain text.'
 
   def self.new_from_config(
     config_file: File.join(ENV['HOME'], '.mesa_test.yml'), force_setup: false,
-    base_uri: 'https://mesa-test-hub.herokuapp.com'
+    base_uri: DEFAULT_URI
     # base_uri: 'http://localhost:3000'
   )
     new_submitter = new(config_file: config_file, base_uri: base_uri)
@@ -107,7 +118,7 @@ e-mail and password will be stored in plain text.'
 
   attr_accessor :computer_name, :user_name, :email, :password, :platform,
                 :platform_version, :processor, :ram_gb, :compiler,
-                :compiler_version, :config_file, :base_uri
+                :compiler_version, :config_file, :base_uri, :last_tested
 
   attr_reader :shell
 
@@ -115,7 +126,7 @@ e-mail and password will be stored in plain text.'
   def initialize(
       computer_name: nil, user_name: nil, email: nil, platform: nil,
       platform_version: nil, processor: nil, ram_gb: nil, compiler: nil,
-      compiler_version: nil, config_file: nil, base_uri: nil
+      compiler_version: nil, config_file: nil, base_uri: nil, last_tested: nil
   )
     @computer_name = computer_name || Socket.gethostname.scan(/^[^\.]+\.?/)[0]
     @computer_name.chomp!('.') if @computer_name
@@ -140,6 +151,7 @@ e-mail and password will be stored in plain text.'
     @compiler_version = compiler_version || ''
     @config_file = config_file || File.join(ENV['HOME'], '.mesa_test.yml')
     @base_uri = base_uri
+    @last_tested = last_tested || DEFAULT_REVISION
 
     # set up thor-proof way to get responses from user. Thor hijacks the
     # gets command, so we have to use its built-in "ask" method, which is
@@ -164,6 +176,7 @@ e-mail and password will be stored in plain text.'
     puts "Processor               #{processor}"
     puts "RAM                     #{ram_gb} GB"
     puts "Compiler                #{compiler} #{compiler_version}"
+    puts "Last tested revision    #{last_tested}"
     puts "Config location         #{config_file}"
     puts '-------------------------------------------------------'
     puts ''
@@ -196,7 +209,8 @@ e-mail and password will be stored in plain text.'
       'ram_gb' => ram_gb,
       'platform_version' => platform_version,
       'compiler' => compiler,
-      'compiler_version' => compiler_version
+      'compiler_version' => compiler_version,
+      'last_tested' => last_tested
     }
     File.open(config_file, 'w') { |f| f.write(YAML.dump(data_hash)) }
   end
@@ -213,6 +227,7 @@ e-mail and password will be stored in plain text.'
     @platform_version = data_hash['platform_version']
     @compiler = data_hash['compiler']
     @compiler_version = data_hash['compiler_version']
+    @last_tested = data_hash['last_tested'] || @last_tested
   end
 
   # create and return hash of parameters for a TestInstance submission
@@ -290,11 +305,16 @@ e-mail and password will be stored in plain text.'
     response.is_a? Net::HTTPCreated
   end
 
-  def submit_all(mesa)
+  def submit_all(mesa, mod = :all)
     submitted_cases = []
     unsubmitted_cases = []
-    mesa.test_names.each do |mod, test_names|
-      test_names.each do |test_name|
+    if mod == :all
+      success = true
+      mesa.test_names.each_key do |this_mod|
+        success &&= submit_all(mesa, mod = this_mod)
+      end
+    else
+      mesa.test_names[mod].each do |test_name|
         # get at test case
         test_case = mesa.test_cases[mod][test_name]
         # try to submit and note if it does or doesn't successfully submit
@@ -306,25 +326,36 @@ e-mail and password will be stored in plain text.'
           unsubmitted_cases << test_name
         end
       end
+      puts "\n Submission results for #{mod} module:"
+      puts '#####################################'
+      if !submitted_cases.empty?
+        shell.say 'Submitted the following cases:', :green
+        puts submitted_cases.join("\n")
+      else
+        shell.say 'Did not successfully submit any cases.', :red
+      end
+      unless unsubmitted_cases.empty?
+        puts "\n\n\n"
+        shell.say 'Failed to submit the following cases:', :red
+        puts unsubmitted_cases.join("\n")
+      end
+      # return true and update last tested if all cases were submitted
+      success = submitted_cases.length == mesa.test_names.length
+      if success
+        last_tested = mesa.version
+        shell.say "\n\nUpdating last tested revision to #{last_tested}."
+        save_computer_data
+      end
     end
-    puts ''
-    if !submitted_cases.empty?
-      shell.say 'Submitted the following cases:', :green
-      puts submitted_cases.join("\n")
-    else
-      shell.say 'Did not successfully submit any cases.', :red
-    end
-    unless unsubmitted_cases.empty?
-      puts "\n\n\n"
-      shell.say 'Failed to submit the following cases:', :red
-      puts unsubmitted_cases.join("\n")
-    end
-    # return true if all cases were submitted
-    submitted_cases.length == mesa.test_names.length
+    # return boolean indicating whether or not all cases successfully
+    # SUBMITTED (irrespective of passing status)
+    success
   end
 end
 
 class Mesa
+  SVN_URI = 'svn://svn.code.sf.net/p/mesa/code/trunk'.freeze    
+
   attr_reader :mesa_dir, :test_data, :test_names, :test_cases, :shell
   attr_accessor :update_checksums
 
@@ -337,6 +368,51 @@ class Mesa
                           "revision #{version_number}."
     end
     Mesa.new(mesa_dir: new_mesa_dir)
+  end
+
+  def self.log_since(last_tested = DEFAULT_REVISION)
+    `svn log #{SVN_URI} -r #{last_tested}:HEAD`
+  end
+
+  def self.log_lines_since(last_tested = DEFAULT_REVISION)
+    log_since(last_tested).split("\n").reject(&:empty?)
+  end
+
+  def self.add_commit(commits, revision, author)
+    commits << Commit.new
+    commits.last.revision = revision.to_i
+    commits.last.author = author
+    commits.last.message = []
+  end
+
+  def self.process_line(commits, line)
+    last = commits.last
+    if line =~ /^-+$/
+      # dashed lines separate commits
+      # Done with last commit (if it exists), so clean up message
+      last.message = last.message.join("\n") unless last.nil?
+    elsif line =~ /^r(\d+) \| (\w+) \| .* \| \d+ lines?$/
+      # first line of a commit, scrape data and make new commit
+      add_commit(commits, $1, $2)
+    else
+      # add lines to the message (will concatenate later to single String)
+      last.message << line.strip
+    end
+  end
+
+  # all commits since the given version number
+  def self.commits_since(last_tested = DEFAULT_REVISION)
+    commits = []
+    log_lines_since(last_tested).each { |line| process_line(commits, line) }
+    commits.sort_by(&:revision).reverse
+  end
+
+  def self.last_non_paxton_revision(last_tested = DEFAULT_REVISION)
+    commits_since(last_tested).each do |commit|
+      return commit.revision unless commit.author == 'bill_paxton'
+    end
+    # give out garbage if no valid commit is found
+    nil
   end
 
   def initialize(mesa_dir: ENV['MESA_DIR'])
@@ -447,7 +523,7 @@ class Mesa
         if line =~ no_skip
           found_test = true
           @test_data[mod][$1] = { success_string: $2, final_model: $3,
-                                  photo: $4} 
+                                  photo: $4}
         elsif line =~ one_skip
           found_test = true
           @test_data[mod][$1] = { success_string: $2, final_model: $3,
@@ -459,7 +535,7 @@ class Mesa
         end
 
         if found_test
-          @test_names[mod] << $1 unless @test_names.include? $1
+          @test_names[mod] << $1 unless @test_names[mod].include? $1
         end
       end
 
@@ -483,7 +559,7 @@ class Mesa
     end
   end
 
-  # based off of `$MESA_DIR/star/test_suite/each_test_run_and_diff` from 
+  # based off of `$MESA_DIR/star/test_suite/each_test_run_and_diff` from
   # revision 10000
   def each_test_clean(mod: :all)
     if mod == :all
@@ -508,7 +584,7 @@ class Mesa
         test_cases[mod][test_name].do_one
         test_cases[mod][test_name].log_results if log_results
       end
-      log_summary if log_results
+      log_summary(mod: mod) if log_results
     end
   end
 
@@ -765,6 +841,7 @@ class MesaTestCase
         'test_results.yml', color = :blue
       FileUtils.rm_f 'binary_history.data'
       FileUtils.rm_f 'out.txt'
+      FileUtils.rm_f 'test_results.yml'
       if File.directory? File.join('star_history', 'history_out')
         shell.say 'Removing all files of the form history_out* from ' \
           'star_history', :blue
@@ -822,13 +899,19 @@ class MesaTestCase
       return
     end
     data = YAML.safe_load(File.read(load_file), [Symbol])
-    @runtime_seconds = data['runtime_seconds']
-    @mod = data['module']
-    @mesa_version = data['mesa_version']
-    @outcome = data['outcome'].to_sym
-    @test_omp_num_threads = data['omp_num_threads']
-    @success_type = data['success_type']
-    @failure_type = data['failure_type']
+    @runtime_seconds = data['runtime_seconds'] || @runtime_seconds
+    @mod = data['module'] || @mod
+    @mesa_version = data['mesa_version'] || @mesa_version
+    @outcome = data['outcome'] || @outcome
+    @test_omp_num_threads = data['omp_num_threads'] || @test_omp_num_threads
+    @success_type = data['success_type'] || @success_type
+    @failure_type = data['failure_type'] || @failure_type
+
+    # convert select data to symbols since that is how they are used
+    @outcome = @outcome.to_sym if @outcome
+    @success_type = @success_type.to_sym if @success_type
+    @failure_type = @failure_type.to_sym if @failure_type
+
     shell.say "Done loading data from #{load_file}.\n", :green
   end
 
@@ -944,7 +1027,7 @@ class MesaTestCase
       # if there's no photo, we won't check the checksum, so we've succeeded
       return succeed(:run_test_string) unless photo
       # if there is a photo, we'll have to wait and see
-      true
+      return true
     end
 
     # check that final model matches

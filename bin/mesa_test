@@ -5,6 +5,8 @@ require 'mesa_test'
 require 'thor'
 
 class MesaTest < Thor
+  DEVLOPMENT_URI = 'http://localhost:3000'.freeze
+
   desc 'setup [CONFIG_FILE]', 'Setup MesaTestHub config file.'
   long_desc <<-LONGDESC
     If optional CONFIG_FILE is provided, search for that file and load it
@@ -50,7 +52,8 @@ class MesaTest < Thor
   option :submit, type: :boolean, default: true
   def test_one(mesa_dir, test_case_name)
     s = create_and_check_submitter(force: options[:force]) if options[:submit]
-    m = create_and_check_mesa(mesa_dir: mesa_dir, diff: options[:diff])
+    m = create_and_check_mesa(mesa_dir: mesa_dir, diff: options[:diff],
+                              mod: options[:module].downcase.to_sym)
     t = create_and_check_test_case(mesa: m, test_case_name: test_case_name,
                                    mod: options[:module].downcase.to_sym)
 
@@ -84,6 +87,9 @@ class MesaTest < Thor
   in ~/.mesa_test.yml are correct. Only relevant if --submit option is on
   (by default it is).
 
+  With --module option, select which module to search through, with the default
+  being "all" (search all modules in order). Example: --module=star.
+
   With --log option, save yml file of test results in test directory and a
   summary in the test suite directory. On by default. Shut off with --no-log.
 
@@ -93,16 +99,19 @@ class MesaTest < Thor
   option :diff, type: :boolean, default: true
   option :force, type: :boolean, aliases: '-f'
   option :log, type: :boolean, default: true
+  option :module, type: :string, default: :all
   option :submit, type: :boolean, default: true
   def test_all(mesa_dir)
     s = create_and_check_submitter(force: options[:force]) if options[:submit]
-    m = create_and_check_mesa(mesa_dir: mesa_dir, diff: options[:diff])
+    m = create_and_check_mesa(mesa_dir: mesa_dir, diff: options[:diff],
+                              mod: options[:module].downcase.to_sym)
 
     # run all tests
-    m.each_test_run_and_diff(log_results: options[:log])
+    m.each_test_run_and_diff(log_results: options[:log],
+                             mod: options[:module].downcase.to_sym)
 
     # submit all tests
-    s.submit_all(m) if options[:submit]
+    s.submit_all(m, options[:module].downcase.to_sym) if options[:submit]
   end
 
   desc 'submit_one MESA_DIR TEST_CASE', 'submit one completed test case'
@@ -124,7 +133,8 @@ class MesaTest < Thor
   option :module, type: :string, aliases: '-m', default: 'all'
   def submit_one(mesa_dir, test_case_name)
     s = create_and_check_submitter(force: options[:force])
-    m = create_and_check_mesa(mesa_dir: mesa_dir)
+    m = create_and_check_mesa(mesa_dir: mesa_dir,
+                              mod: options[:module].downcase.to_sym)
     t = create_and_check_test_case(mesa: m, test_case_name: test_case_name,
                                    mod: options[:module].downcase.to_sym)
     # load test results
@@ -144,17 +154,22 @@ class MesaTest < Thor
 
   With --force option, skip confirmation of computer details, assuming values
   in ~/.mesa_test.yml are correct.
+
+  With --module option, select which module to search through, with the default
+  being "all" (search all modules in order). Example: --module=star.
   LONGDESC
   option :force, type: :boolean, aliases: '-f'
+  option :module, type: :string, aliases: '-m', default: 'all'
   def submit_all(mesa_dir)
-    s = create_and_check_submitter(force: force)
-    m = create_and_check_mesa(mesa_dir: mesa_dir)
+    s = create_and_check_submitter(force: options[:force])
+    m = create_and_check_mesa(mesa_dir: mesa_dir,
+                              mod: options[:module].downcase.to_sym)
 
-    # run all tests
-    m.each_test_load_results
+    # load all test data
+    m.each_test_load_results(mod: options[:module].downcase.to_sym)
 
     # submit all tests
-    s.submit_all(m)
+    s.submit_all(m, options[:module].downcase.to_sym)
   end
 
   desc 'install VERSION_NUMBER MESA_DIR', 'download and install mesa release '\
@@ -187,6 +202,11 @@ class MesaTest < Thor
 
     `mesa_test test_all SOME_DIR`
 
+  If VERSION_NUMBER is 'non-paxton', then the most recent commit by anyone
+  other than Bill Paxton ('bill_paxton') is tested and the --diff flag is
+  ignored and set to false. Note that using 'HEAD' for version number will
+  automatically select the most recent release, regardless of the author.
+
   With --diff option, assume the checksums are up-to-date (behave like
   each_test_run_and_diff), on by default.  To update checksums after ./rn
   (behave like each_test_run), use --no-diff.
@@ -197,24 +217,35 @@ class MesaTest < Thor
 
   Use flag --force to skip confirmation of computer details if they can be
   read from ~/.mesa_test.yml.
+
+  With --log option, save yml file of test results in test directory and a
+  summary in the test suite directory. On by default. Shut off with --no-log.  
+
+  With --module option, select which module to search through, with the default
+  being "all". Example: --module=star.
   LONGDESC
   option :diff, type: :boolean, default: true
   option :destroy, type: :boolean
+  option :log, type: :boolean, default: true
   option :force, type: :boolean, aliases: '-f'
+  option :module, type: :string, aliases: '-m', default: 'all'
   def install_and_test_all(version, mesa_dir)
     s = create_and_check_submitter(force: options[:force])
-
-    m = Mesa.download(version_number: version, new_mesa_dir: mesa_dir)
+    mesa_version, diff = filter_version_and_diff(version, s)
+    m = Mesa.download(version_number: mesa_version, new_mesa_dir: mesa_dir)
     m.clean
     m.install
 
-    m = create_and_check_mesa(mesa_dir: mesa_dir, diff: options[:diff])
+    m = create_and_check_mesa(mesa_dir: mesa_dir, diff: diff,
+                              mod: options[:module].downcase.to_sym)
 
-    # run all tests
-    m.each_test_run_and_diff
+    # run all tests. Don't be fooled, whether or not a diff happens is set
+    # by the diff attribute of the mesa object, set above.
+    m.each_test_run_and_diff(mod: options[:module].downcase.to_sym,
+                             log_results: options[:log])
 
     # submit all tests
-    successfully_submitted = s.submit_all(m)
+    successfully_submitted = s.submit_all(m, options[:module].downcase.to_sym)
 
     # if requested, and if submission successful, destroy the directory
     m.destroy if successfully_submitted && options[:destroy]
@@ -234,6 +265,7 @@ class MesaTest < Thor
 
   def create_and_check_submitter(force: false)
     s = MesaTestSubmitter.new_from_config
+    # s = MesaTestSubmitter.new_from_config(base_uri: DEFAULT_URI)
     unless force
       s.setup unless s.confirm_computer_data
     end
@@ -241,13 +273,13 @@ class MesaTest < Thor
     s
   end
 
-  def create_and_check_mesa(mesa_dir:, diff: true)
+  def create_and_check_mesa(mesa_dir:, diff: true, mod: :all)
     m = Mesa.new mesa_dir: mesa_dir
     unless m.installed?
       raise MesaDirError, "Invalid MESA_DIR: #{mesa_dir}. Please download " \
       'and install a valid MESA version or provide the path to one.'
     end
-    m.load_test_source_data
+    m.load_test_source_data(mod: mod)
 
     # choose whether to update checksums
     m.update_checksums = !diff
@@ -267,6 +299,14 @@ class MesaTest < Thor
     end.join(' or ')
     msg << '.'
     raise TestCaseDirError, msg
+  end
+
+  def filter_version_and_diff(version, submitter)
+    if version.downcase == 'non-paxton'
+      [Mesa.last_non_paxton_revision(submitter.last_tested), false]
+    else
+      [version, options[:diff]]
+    end
   end
 end
 

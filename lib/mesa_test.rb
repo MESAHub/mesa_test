@@ -371,7 +371,8 @@ class Mesa
   end
 
   def self.log_since(last_tested = DEFAULT_REVISION)
-    `svn log #{SVN_URI} -r #{last_tested}:HEAD`
+    # svn commit log back to, but excluding, the last revision tested
+    `svn log #{SVN_URI} -r #{last_tested + 1}:HEAD`
   end
 
   def self.log_lines_since(last_tested = DEFAULT_REVISION)

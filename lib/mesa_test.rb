@@ -340,9 +340,9 @@ e-mail and password will be stored in plain text.'
         puts unsubmitted_cases.join("\n")
       end
       # return true and update last tested if all cases were submitted
-      success = submitted_cases.length == mesa.test_names.length
+      success = submitted_cases.length == mesa.test_names[mod].length
       if success
-        last_tested = mesa.version
+        @last_tested = mesa.version_number
         shell.say "\n\nUpdating last tested revision to #{last_tested}."
         save_computer_data
       end

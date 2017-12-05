@@ -308,7 +308,7 @@ class MesaTest < Thor
   end
 
   def filter_version_and_diff(version, submitter)
-    if version.downcase == 'non-paxton'
+    if %w[non-paxton non_paxton].include?(version.to_s.downcase)
       [Mesa.last_non_paxton_revision(submitter.last_tested), false]
     else
       [version, options[:diff]]

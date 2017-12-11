@@ -1,11 +1,19 @@
 #! /usr/bin/env ruby
 
-# require_relative '../lib/mesa_test'
-require 'mesa_test'
+# if true, submit cases to localhost:3000 and load local mesa_test library
+# rather than system version
+DEVELOPMENT_MODE = false
+
+if DEVELOPMENT_MODE
+  require_relative '../lib/mesa_test'
+else
+  require 'mesa_test'
+end
+
 require 'thor'
 
 class MesaTest < Thor
-  DEVLOPMENT_URI = 'http://localhost:3000'.freeze
+  DEVELOPMENT_URI = 'http://localhost:3000'.freeze
 
   desc 'setup [CONFIG_FILE]', 'Setup MesaTestHub config file.'
   long_desc <<-LONGDESC
@@ -30,8 +38,7 @@ class MesaTest < Thor
   #{MesaTestCase.modules.map { |mod| '    ' + mod.to_s }.join(', ')}
 
   With --diff option, assume the checksums are up-to-date (behave like
-  each_test_run_and_diff), on by default.  To update checksums after ./rn
-  (behave like each_test_run), use --no-diff.
+  each_test_run_and_diff), off by default.
 
   With --force option, skip confirmation of computer details, assuming values
   in ~/.mesa_test.yml are correct.
@@ -45,7 +52,7 @@ class MesaTest < Thor
   With --submit option, upload results to MESATestHub. By default, this is on.
   To run without submission, use --no-submit.
   LONGDESC
-  option :diff, type: :boolean, default: true
+  option :diff, type: :boolean, default: false
   option :force, type: :boolean, aliases: '-f'
   option :log, type: :boolean, default: true
   option :module, type: :string, default: :all
@@ -80,8 +87,7 @@ class MesaTest < Thor
   detailed in MESA_DIR/star/test_suite/do1_test_source.
 
   With --diff option, assume the checksums are up-to-date (behave like
-  each_test_run_and_diff), on by default.  To update checksums after ./rn
-  (behave like each_test_run), use --no-diff.
+  each_test_run_and_diff), off by default.
 
   With --force option, skip confirmation of computer details, assuming values
   in ~/.mesa_test.yml are correct. Only relevant if --submit option is on
@@ -96,7 +102,7 @@ class MesaTest < Thor
   With --submit option, upload results to MESATestHub. By default, this is on.
   To run without submission, use --no-submit.
   LONGDESC
-  option :diff, type: :boolean, default: true
+  option :diff, type: :boolean, default: false
   option :force, type: :boolean, aliases: '-f'
   option :log, type: :boolean, default: true
   option :module, type: :string, default: :all
@@ -209,8 +215,7 @@ class MesaTest < Thor
   author.
 
   With --diff option, assume the checksums are up-to-date (behave like
-  each_test_run_and_diff), on by default.  To update checksums after ./rn
-  (behave like each_test_run), use --no-diff.
+  each_test_run_and_diff), off by default.
 
   Use flag --destroy to self destruct MESA_DIR after successful test
   submission. Essentially does rm -rf MESA_DIR after the test suite. Useful
@@ -225,7 +230,7 @@ class MesaTest < Thor
   With --module option, select which module to search through, with the default
   being "all". Example: --module=star.
   LONGDESC
-  option :diff, type: :boolean, default: true
+  option :diff, type: :boolean, default: false
   option :destroy, type: :boolean
   option :log, type: :boolean, default: true
   option :force, type: :boolean, aliases: '-f'
@@ -270,8 +275,11 @@ class MesaTest < Thor
   end
 
   def create_and_check_submitter(force: false)
-    s = MesaTestSubmitter.new_from_config
-    # s = MesaTestSubmitter.new_from_config(base_uri: DEFAULT_URI)
+    s = if DEVELOPMENT_MODE
+          MesaTestSubmitter.new_from_config(base_uri: DEVELOPMENT_URI)
+        else
+          MesaTestSubmitter.new_from_config
+        end
     unless force
       s.setup unless s.confirm_computer_data
     end

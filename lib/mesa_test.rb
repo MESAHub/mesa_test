@@ -361,8 +361,10 @@ class Mesa
 
   def self.download(version_number: nil, new_mesa_dir: nil)
     new_mesa_dir ||= File.join(ENV['HOME'], 'mesa-test-r' + version_number.to_s)
-    success = system("svn co -r #{version_number} " \
-                     "svn://svn.code.sf.net/p/mesa/code/trunk #{new_mesa_dir}")
+    success = bash_execute(
+      "svn co -r #{version_number} " \
+      "svn://svn.code.sf.net/p/mesa/code/trunk #{new_mesa_dir}"
+    )
     unless success
       raise MesaDirError, 'Encountered a problem in download mesa ' \
                           "revision #{version_number}."
@@ -459,7 +461,7 @@ class Mesa
                                 "running `clean` in #{mesa_dir}." do
         puts 'MESA_DIR = ' + ENV['MESA_DIR']
         puts './clean'
-        system('./clean')
+        bash_execute('./clean')
       end
     end
     self
@@ -471,7 +473,7 @@ class Mesa
                                 "running `install` in #{mesa_dir}." do
         puts 'MESA_DIR = ' + ENV['MESA_DIR']
         puts './install'
-        system('./install')
+        bash_execute('./install')
       end
     end
     self
@@ -825,7 +827,7 @@ class MesaTestCase
     check_test_case
     in_dir do
       puts './clean'
-      unless system('./clean')
+      unless bash_execute('./clean')
         raise TestCaseDirError, 'Encountered an error while running ./clean ' \
         "in #{Dir.getwd}."
       end
@@ -990,7 +992,7 @@ class MesaTestCase
 
     # do the run
     puts './rn >> out.txt 2> err.txt'
-    system('./rn >> out.txt 2> err.txt')
+    bash_execute('./rn >> out.txt 2> err.txt')
 
     # report runtime and clean up
     run_finish = Time.now
@@ -1021,7 +1023,7 @@ class MesaTestCase
     # if this is false, behave like each_test_run_and_diff.  assume
     # the checksum is up-to-date and check it matches after rn and re.
     if @mesa.update_checksums
-      system("md5sum \"#{final_model}\" > checks.md5")
+      bash_execute("md5sum \"#{final_model}\" > checks.md5")
       puts "md5sum \"#{final_model}\" > checks.md5"
       FileUtils.cp final_model, 'final_check.mod'
 
@@ -1034,7 +1036,7 @@ class MesaTestCase
     # check that final model matches
     puts './ck >& final_check_diff.txt'
     return fail_test(:run_checksum) unless
-      system('./ck >& final_check_diff.txt')
+      bash_execute('./ck >& final_check_diff.txt')
     return fail_test(:run_diff) if File.exist?('final_check_diff.txt') &&
                                    !File.read('final_check_diff.txt').empty?
     return succeed(:run_checksum) if File.exist? final_model
@@ -1056,13 +1058,13 @@ class MesaTestCase
 
     # do restart and consolidate output
     puts "./re #{photo} >> out.txt 2> err.txt"
-    system("./re #{photo} >> out.txt 2> err.txt")
+    bash_execute("./re #{photo} >> out.txt 2> err.txt")
     append_and_rm_err
 
     # check that final model matches
     puts './ck >& final_check_diff.txt'
     return fail_test(:photo_checksum) unless
-      system('./ck >& final_check_diff.txt')
+      bash_execute('./ck >& final_check_diff.txt')
     return fail_test(:photo_diff) if
       File.exist?('final_check_diff.txt') &&
       !File.read('final_check_diff.txt').empty?
@@ -1073,9 +1075,8 @@ class MesaTestCase
     # assumes we are in the test case directory. Should only be called
     # in the context of an `in_dir` block.
 
-    # first clean and make... worried about shell compatibility since we
-    # aren't forcing bash. Hopefully '>' for redirecting output is pretty
-    # universal
+    # first clean and make... Should be compatible with any shell since
+    # redirection is always wrapped in 'bash -c "{STUFF}"'
     simple_clean
     mk
 
@@ -1109,14 +1110,14 @@ class MesaTestCase
 
   def simple_clean
     puts './clean'
-    return if system('./clean')
+    return if bash_execute('./clean')
     raise TestCaseDirError, 'Encountered an error when running `clean` in ' \
       "#{Dir.getwd} for test case #{test_name}."
   end
 
   def mk
     puts './mk > mk.txt'
-    unless system('./mk > mk.txt')
+    unless bash_execute('./mk > mk.txt')
       raise TestCaseDirError, 'Encountered an error when running `mk` in ' \
         "#{Dir.getwd} for test case #{test_name}."
     end
@@ -1128,6 +1129,11 @@ class MesaTestCase
     return unless final_model
     return unless File.exist?(final_model)
     FileUtils.rm(final_model)
+  end
+
+  # force the execution to happen with bash
+  def bash_execute(command)
+    system('bash -c "' + command + '"')
   end
 end
 

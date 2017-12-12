@@ -1130,11 +1130,6 @@ class MesaTestCase
     return unless File.exist?(final_model)
     FileUtils.rm(final_model)
   end
-
-  # force the execution to happen with bash
-  def bash_execute(command)
-    system('bash -c "' + command + '"')
-  end
 end
 
 ################################
@@ -1193,4 +1188,9 @@ def generate_seeds_rb(mesa_dir, outfile)
     f.puts '  ]'
     f.puts ')'
   end
+end
+
+# force the execution to happen with bash
+def bash_execute(command)
+  system('bash -c "' + command + '"')
 end

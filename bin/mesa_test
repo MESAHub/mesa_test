@@ -410,7 +410,7 @@ class MesaTest < Thor
   option :force, type: :boolean, aliases: '-f'
   option :module, type: :string, aliases: '-m', default: 'all'
   option :svn, type: :boolean, default: true
-  def install_and_test_all(version, mesa_dir)
+  def install_and_test_revision(version, mesa_dir)
     s = create_and_check_submitter(force: options[:force])
     mesa_version, diff = filter_version_and_diff(version, s)
     if mesa_version.nil?

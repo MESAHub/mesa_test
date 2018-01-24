@@ -246,7 +246,11 @@ e-mail and password will be stored in plain text.'
       platform_version: platform_version,
       omp_num_threads: test_case.test_omp_num_threads,
       success_type: test_case.success_type,
-      failure_type: test_case.failure_type
+      failure_type: test_case.failure_type,
+      steps: test_case.steps,
+      retries: test_case.retries,
+      backups: test_case.backups,
+      summary_text: test_case.summary_text
     }
 
     # enter in test-specific data, DISABLED FOR NOW
@@ -256,6 +260,57 @@ e-mail and password will be stored in plain text.'
     #   end
     # end
     res
+  end
+
+  def revision_submit_params(mesa)
+    mesa.load_svn_data if mesa.use_svn?      
+    # version gives data about version
+    # user gives data about the user and computer submitting information
+    # instances is array of hashes that identify test instances (more below)
+    res = {
+            version: {number: mesa.version_number},
+            user: {email: email, password: password, computer: computer_name},
+            instances: []
+          }
+    if mesa.use_svn?
+      res[:version][:author] = mesa.svn_author
+      res[:version][:log] = mesa.svn_log
+    end
+
+    # hold on to test case names that fail in synthesizing params
+    has_errors = []
+
+    # each instance has basic information in :test_instance and extra
+    # information that requires the web app to work, stored in :extra
+    mesa.test_names.each do |mod, names|
+      names.each do |test_name|
+        begin
+          test_case = mesa.test_cases[mod][test_name]
+          res[:instances] << {
+            test_instance: {
+              runtime_seconds: test_case.runtime_seconds,
+              passed: test_case.passed?,
+              compiler: compiler,
+              compiler_version: compiler_version,
+              platform_version: platform_version,
+              omp_num_threads: test_case.test_omp_num_threads,
+              success_type: test_case.success_type,
+              failure_type: test_case.failure_type,
+              steps: test_case.steps,
+              retries: test_case.retries,
+              backups: test_case.backups,
+              summary_text: test_case.summary_text
+            },
+            extra: { test_case: test_name, mod: mod }
+          }
+        rescue TestCaseDirError
+          shell.say "Passage status for #{test_case.test_name} not yet "\
+                    'known. Run test first and then submit.', :red
+          has_errors.append(test_case)
+        end
+      end
+    end
+    [res, has_errors]
   end
 
   def confirm_computer
@@ -271,7 +326,6 @@ e-mail and password will be stored in plain text.'
       password: password,
       computer_name: computer_name
     }.to_json
-
     JSON.parse(https.request(request).body).to_hash
   end
 
@@ -351,15 +405,53 @@ e-mail and password will be stored in plain text.'
     # SUBMITTED (irrespective of passing status)
     success
   end
+
+  # similar to submit_all, but does EVERYTHING in one post, including
+  # version information. No support for individual modules now.
+  def submit_revision(mesa)
+    uri = URI.parse(base_uri + '/versions/submit_revision.json')
+    https = Net::HTTP.new(uri.hostname, uri.port)
+    https.use_ssl = true if base_uri.include? 'https'
+
+    request = Net::HTTP::Post.new(
+      uri,
+      initheader = { 'Content-Type' => 'application/json' }
+    )
+    request_data, error_cases = revision_submit_params(mesa)
+    if request_data[:instances].empty?
+      shell.say "No completed test data found in #{mesa.mesa_dir}. Aborting.",
+                :red
+      return false
+    end
+    request.body = request_data.to_json
+
+    # verbose = true
+    # puts "\n" if verbose
+    # puts JSON.parse(request.body).to_hash if verbose
+
+    response = https.request request
+    # puts JSON.parse(response.body).to_hash if verbose
+    if !response.is_a? Net::HTTPCreated
+      shell.say "\nFailed to submit some or all cases and/or version data.",
+                :red
+      false
+    elsif !error_cases.empty?
+      shell.say "\nFailed to gather data for the following cases:", :red
+      error_cases.each { |tc| shell.say "  #{tc.test_name}", :red }
+      false
+    end
+    true
+  end
 end
 
 class Mesa
   SVN_URI = 'svn://svn.code.sf.net/p/mesa/code/trunk'.freeze    
 
-  attr_reader :mesa_dir, :test_data, :test_names, :test_cases, :shell
+  attr_reader :mesa_dir, :test_data, :test_names, :test_cases, :shell,
+              :svn_version, :svn_author, :svn_log
   attr_accessor :update_checksums
 
-  def self.download(version_number: nil, new_mesa_dir: nil)
+  def self.download(version_number: nil, new_mesa_dir: nil, use_svn: true)
     new_mesa_dir ||= File.join(ENV['HOME'], 'mesa-test-r' + version_number.to_s)
     success = bash_execute(
       "svn co -r #{version_number} " \
@@ -369,7 +461,7 @@ class Mesa
       raise MesaDirError, 'Encountered a problem in download mesa ' \
                           "revision #{version_number}."
     end
-    Mesa.new(mesa_dir: new_mesa_dir)
+    Mesa.new(mesa_dir: new_mesa_dir, use_svn: use_svn)
   end
 
   def self.log_since(last_tested = DEFAULT_REVISION)
@@ -418,8 +510,9 @@ class Mesa
     nil
   end
 
-  def initialize(mesa_dir: ENV['MESA_DIR'])
+  def initialize(mesa_dir: ENV['MESA_DIR'], use_svn: true)
     @mesa_dir = mesa_dir
+    @use_svn = use_svn
     @update_checksums = false
 
     # these get populated by calling #load_test_data
@@ -429,14 +522,37 @@ class Mesa
 
     # way to output colored text
     @shell = Thor::Shell::Color.new
+
+    # these can be populated by calling load_svn_data
+    @svn_version = nil
+    @svn_author = nil
+    @svn_log = nil
+    load_svn_data if use_svn?
+  end
+
+  def use_svn?
+    @use_svn
   end
 
   def version_number
-    # prefer svn's reported version number
-    version = svn_version_number
+    version = @svn_version || 0
     # fall back to MESA_DIR/data's version number svn didn't work
     version = data_version_number unless version > 0
     version
+  end
+
+  def log_entry
+    `svn log #{SVN_URI} -r #{version_number}`
+  end
+
+  def load_svn_data
+    # if this number is bad, #version_number will use fallback method
+    @svn_version = svn_version_number
+    lines = log_entry.split("\n").reject { |line| line =~ /^-+$/ or line.empty?}
+    data_line = lines.shift
+    revision, author, date, length = data_line.split('|')
+    @svn_author = author.strip
+    @svn_log = lines.join("\n").strip
   end
 
   # get version number from svn (preferred method)
@@ -728,7 +844,8 @@ end
 class MesaTestCase
   attr_reader :test_name, :mesa_dir, :mesa, :success_string, :final_model,
               :failure_msg, :success_msg, :photo, :runtime_seconds,
-              :test_omp_num_threads, :mesa_version, :shell, :mod
+              :test_omp_num_threads, :mesa_version, :shell, :mod, :retries,
+              :backups, :steps, :runtime_minutes, :summary_text
   attr_accessor :data_names, :data_types, :failure_type, :success_type,
                 :outcome
 
@@ -750,6 +867,11 @@ class MesaTestCase
     @outcome = :not_tested
     @runtime_seconds = 0
     @test_omp_num_threads = 1
+    @runtime_minutes = 0
+    @retries = 0
+    @backups = 0
+    @steps = 0
+    @summary_text = ''
     unless MesaTestCase.modules.include? mod
       raise TestCaseDirError, "Invalid module: #{mod}. Must be one of: " +
                               MesaTestCase.modules.join(', ')
@@ -794,7 +916,7 @@ class MesaTestCase
       false
     else
       raise TestCaseDirError, 'Cannot determine pass/fail status of ' \
-      '#{test_name} yet.'
+      "#{test_name} yet."
     end
   end
 
@@ -886,7 +1008,12 @@ class MesaTestCase
       'outcome' => outcome,
       'omp_num_threads' => test_omp_num_threads,
       'success_type' => success_type,
-      'failure_type' => failure_type
+      'failure_type' => failure_type,
+      'runtime_minutes' => runtime_minutes,
+      'retries' => retries,
+      'backups' => backups,
+      'steps' => steps,
+      'summary_text' => summary_text
     }
     File.open(save_file, 'w') { |f| f.write(YAML.dump(res)) }
     shell.say "Successfully saved results to file #{save_file}.\n", :green
@@ -909,6 +1036,11 @@ class MesaTestCase
     @test_omp_num_threads = data['omp_num_threads'] || @test_omp_num_threads
     @success_type = data['success_type'] || @success_type
     @failure_type = data['failure_type'] || @failure_type
+    @runtime_minutes = data['runtime_minutes'] || @runtime_minutes
+    @retries = data['retries'] || @retries
+    @backups = data['backups'] || @backups
+    @steps = data['steps'] || @steps
+    @summary_text = data['summary_text'] || @summary_text
 
     # convert select data to symbols since that is how they are used
     @outcome = @outcome.to_sym if @outcome
@@ -916,6 +1048,31 @@ class MesaTestCase
     @failure_type = @failure_type.to_sym if @failure_type
 
     shell.say "Done loading data from #{load_file}.\n", :green
+  end
+
+  def load_summary_data
+    out_data = parse_out
+    @runtime_minutes = out_data[:runtime_minutes]
+    @retries = out_data[:retries]
+    @backups = out_data[:backups]
+    @steps = out_data[:steps]
+    @summary_text = get_summary_text
+  end
+
+  def parse_out
+    runtime_minutes = 0
+    retries = 0
+    backups = 0
+    steps = 0
+    run_summaries.each do |summary|
+      summary =~ /^\s*runtime\s*\(minutes\),\s+retries,\s+backups,\ssteps\s+(\d+\.?\d*)\s+(\d+)\s+(\d+)\s+(\d+)\s*$/
+      runtime_minutes += $1.to_f
+      retries += $2.to_i
+      backups += $3.to_i
+      steps += $4.to_i
+    end
+    {runtime_minutes: runtime_minutes, retries: retries, backups: backups,
+     steps: steps}
   end
 
   private
@@ -1085,6 +1242,9 @@ class MesaTestCase
 
     # only check restart/photo if we get through run successfully
     check_restart if check_run
+
+    # get reported runtime, retries, backups, and steps
+    load_summary_data
   end
 
   # append contents of err.txt to end of out.txt, then delete err.txt
@@ -1130,6 +1290,58 @@ class MesaTestCase
     return unless File.exist?(final_model)
     FileUtils.rm(final_model)
   end
+
+  # helpers for getting run summaries
+  def run_summaries
+    # look at all lines in out.txt
+    lines = IO.readlines(File.join(test_case_dir, 'out.txt'))
+
+    # find lines with summary information
+    summary_line_numbers = []
+    lines.each_with_index do |line, i|
+      if line =~ /^\s*runtime \(minutes\),\s+retries,\s+backups,\ssteps/
+        summary_line_numbers << i
+      end
+    end
+
+    # find lines indicating passage or failure of runs and restarts
+    run_finish_line_numbers = []
+    restart_finish_line_numbers = []
+    lines.each_with_index do |line, i|
+      if line =~ /^\s*((?:PASS)|(?:FAIL))\s+#{test_name}\s+restart/
+        restart_finish_line_numbers << i
+      elsif line =~ /^\s*((?:PASS)|(?:FAIL))\s+#{test_name}\s+run/
+        run_finish_line_numbers << i
+      end
+    end
+
+    # only keep summaries that correspond to runs rather than restart
+    summary_line_numbers.select do |i|
+      run_summary?(i, run_finish_line_numbers, restart_finish_line_numbers)
+    end.map { |line_number| lines[line_number] }
+  end
+
+  def get_summary_text
+    lines = IO.readlines(File.join(test_case_dir, 'out.txt')).select do |line|
+      line =~ /^\s*runtime/ 
+    end.join
+  end
+
+  def run_summary?(i, run_finish_line_numbers, restart_finish_line_numbers)
+    # iterate from starting line (a summary line) up to largest PASS/FAIL
+    # line, bail out if summary line is beyond any PASS/FAIL line
+    max_line = run_finish_line_numbers.max || 0
+    max_line = [max_line, (restart_finish_line_numbers.max || 0)].max
+    return false if i > max_line
+    # return true if next PASS/FAIL line is for a run and fail if it is for a
+    # restart
+    i.upto(max_line) do |j|
+      return true if run_finish_line_numbers.include?(j)
+      return false if restart_finish_line_numbers.include?(j)
+    end
+    false
+  end
+
 end
 
 ################################

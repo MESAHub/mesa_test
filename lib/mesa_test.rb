@@ -511,7 +511,9 @@ class Mesa
   end
 
   def initialize(mesa_dir: ENV['MESA_DIR'], use_svn: true)
-    @mesa_dir = mesa_dir
+    # absolute_path ensures that it doesn't matter where commands are executed
+    # from
+    @mesa_dir = File.absolute_path(mesa_dir)
     @use_svn = use_svn
     @update_checksums = false
 
@@ -1051,12 +1053,18 @@ class MesaTestCase
   end
 
   def load_summary_data
-    out_data = parse_out
-    @runtime_minutes = out_data[:runtime_minutes]
-    @retries = out_data[:retries]
-    @backups = out_data[:backups]
-    @steps = out_data[:steps]
-    @summary_text = get_summary_text
+    begin
+      out_data = parse_out
+      @summary_text = get_summary_text
+    rescue Errno::ENOENT
+      shell.say "\nError loading data from #{out_file}. No summary data "\
+                'loaded. Proceeding anyway.', :red
+    else
+      @runtime_minutes = out_data[:runtime_minutes]
+      @retries = out_data[:retries]
+      @backups = out_data[:backups]
+      @steps = out_data[:steps]
+    end
   end
 
   def parse_out
@@ -1244,7 +1252,7 @@ class MesaTestCase
     check_restart if check_run
 
     # get reported runtime, retries, backups, and steps
-    load_summary_data
+    load_summary_data if File.exist?(out_file)
   end
 
   # append contents of err.txt to end of out.txt, then delete err.txt
@@ -1291,10 +1299,14 @@ class MesaTestCase
     FileUtils.rm(final_model)
   end
 
+  def out_file
+    File.join(test_case_dir, 'out.txt')
+  end
+
   # helpers for getting run summaries
   def run_summaries
     # look at all lines in out.txt
-    lines = IO.readlines(File.join(test_case_dir, 'out.txt'))
+    lines = IO.readlines(out_file)
 
     # find lines with summary information
     summary_line_numbers = []
@@ -1322,7 +1334,7 @@ class MesaTestCase
   end
 
   def get_summary_text
-    lines = IO.readlines(File.join(test_case_dir, 'out.txt')).select do |line|
+    lines = IO.readlines(out_file).select do |line|
       line =~ /^\s*runtime/ 
     end.join
   end

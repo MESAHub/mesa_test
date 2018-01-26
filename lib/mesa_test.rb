@@ -306,7 +306,7 @@ e-mail and password will be stored in plain text.'
         rescue TestCaseDirError
           shell.say "Passage status for #{test_case.test_name} not yet "\
                     'known. Run test first and then submit.', :red
-          has_errors.append(test_case)
+          has_errors << test_case
         end
       end
     end

@@ -439,8 +439,12 @@ e-mail and password will be stored in plain text.'
       shell.say "\nFailed to gather data for the following cases:", :red
       error_cases.each { |tc| shell.say "  #{tc.test_name}", :red }
       false
+    else
+      @last_tested = mesa.version_number
+      shell.say "\n\nUpdating last tested revision to #{last_tested}."
+      save_computer_data
+      true      
     end
-    true
   end
 end
 

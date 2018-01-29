@@ -268,7 +268,7 @@ e-mail and password will be stored in plain text.'
     # user gives data about the user and computer submitting information
     # instances is array of hashes that identify test instances (more below)
     res = {
-            version: {number: mesa.version_number},
+            version: {number: mesa.version_number, compiled: mesa.installed?},
             user: {email: email, password: password, computer: computer_name},
             instances: []
           }
@@ -276,6 +276,11 @@ e-mail and password will be stored in plain text.'
       res[:version][:author] = mesa.svn_author
       res[:version][:log] = mesa.svn_log
     end
+
+    # bail out if installation failed (and we care)
+    return [res, []] unless res[:version][:compiled]
+
+    # Successfully compiled, now gather test instance data.
 
     # hold on to test case names that fail in synthesizing params
     has_errors = []
@@ -380,7 +385,7 @@ e-mail and password will be stored in plain text.'
           unsubmitted_cases << test_name
         end
       end
-      puts "\n Submission results for #{mod} module:"
+      puts "\nSubmission results for #{mod} module:"
       puts '#####################################'
       if !submitted_cases.empty?
         shell.say 'Submitted the following cases:', :green
@@ -418,7 +423,7 @@ e-mail and password will be stored in plain text.'
       initheader = { 'Content-Type' => 'application/json' }
     )
     request_data, error_cases = revision_submit_params(mesa)
-    if request_data[:instances].empty?
+    if request_data[:instances].empty? && mesa.installed?
       shell.say "No completed test data found in #{mesa.mesa_dir}. Aborting.",
                 :red
       return false
@@ -440,6 +445,7 @@ e-mail and password will be stored in plain text.'
       error_cases.each { |tc| shell.say "  #{tc.test_name}", :red }
       false
     else
+      shell.say "\nSuccessfully submitted revision #{mesa.version_number}.", :green
       @last_tested = mesa.version_number
       shell.say "\n\nUpdating last tested revision to #{last_tested}."
       save_computer_data
@@ -598,8 +604,18 @@ class Mesa
         bash_execute('./install')
       end
     end
+    # this should never happen if visit_and_check works properly.
+    check_installation
     self
   end
+
+  # throw an error unless it seems like it's properly compiled
+  def check_installation
+    unless installed?
+      raise MesaDirError, 'Installation check failed (no .mod files found ' \
+                          'in the last compiled module).'
+    end
+  end    
 
   def destroy
     FileUtils.rm_rf mesa_dir
@@ -698,6 +714,7 @@ class Mesa
   end
 
   def each_test_run_and_diff(mod: :all, log_results: false)
+    check_installation
     each_test_clean(mod: mod)
 
     if mod == :all
@@ -725,9 +742,28 @@ class Mesa
     end
   end
 
-  def installed?
+  def downloaded?
     check_mesa_dir
   end
+
+  def installed?
+    # look for output files in the last-installed module
+    # this isn't perfect, but it's a pretty good indicator of completing
+    # installation
+    install_file = File.join(mesa_dir, 'install')
+    # match last line of things like "do_one SOME_MODULE" or "do_one_parallel 
+    # SOME_MODULE", after which the "SOME_MODULE" will be stored in $1
+    # that is the last module to be compiled by ./install.
+    IO.readlines(install_file).select do |line|
+      line =~ /^\s*do_one\w*\s+\w+/
+    end.last =~ /^\s*do_one\w*\s+(\w+)/
+    # module is "installed" if there is a nonzero number of files in the
+    # module's make directory of the form SOMETHING.mod
+    !Dir.entries(File.join(mesa_dir, $1, 'make')).select do |file|
+      File.extname(file) == '.mod'
+    end.empty?
+  end
+
 
   private
 
@@ -884,7 +920,7 @@ class MesaTestCase
     end
     @mod = mod
     @failure_msg = {
-      run_test_string: "#{test_name} failed: does not match test string",
+      run_test_string: "#{test_name} run failed: does not match test string",
       run_checksum: "#{test_name} run failed: checksum for #{final_model} " \
         'does not match after ./rn',
       run_diff: "#{test_name} run failed: diff #{final_model} " \
@@ -893,7 +929,9 @@ class MesaTestCase
       photo_checksum: "#{test_name} restart failed: checksum for " \
         "#{final_model} does not match after ./re",
       photo_diff: "#{test_name} restart failed: diff #{final_model} " \
-        'final_check.mod after ./re'
+        'final_check.mod after ./re',
+      compilation: "#{test_name} compilation failed"
+
     }
     @success_msg = {
       run_test_string: "#{test_name} run: found test string: " \
@@ -1247,7 +1285,11 @@ class MesaTestCase
     # first clean and make... Should be compatible with any shell since
     # redirection is always wrapped in 'bash -c "{STUFF}"'
     simple_clean
-    mk
+    begin
+      mk
+    rescue TestCaseDirError
+      return fail_test(:compilation)
+    end
 
     # remove old final model if it exists
     remove_final_model

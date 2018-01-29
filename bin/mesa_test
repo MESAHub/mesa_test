@@ -2,7 +2,7 @@
 
 # if true, submit cases to localhost:3000 and load local mesa_test library
 # rather than system version
-DEVELOPMENT_MODE = false
+DEVELOPMENT_MODE = true
 
 if DEVELOPMENT_MODE
   require_relative '../lib/mesa_test'
@@ -266,12 +266,18 @@ class MesaTest < Thor
     m = create_and_check_mesa(mesa_dir: mesa_dir,
                               mod: options[:module].downcase.to_sym,
                               use_svn: options[:svn])
-
-    # load all test data
-    m.each_test_load_results(mod: options[:module].downcase.to_sym)
-
-    # submit all tests
-    s.submit_revision(m)
+    begin
+      m.check_installation
+    rescue MesaDirError
+      shell.say %q{This MESA installation doesn't seem to be compiled } \
+        'properly. Submitting a compilation failure to MESATestHub.', :red
+    else
+      # load all test data
+      m.each_test_load_results(mod: options[:module].downcase.to_sym)
+    ensure
+      # submit all tests
+      s.submit_revision(m)
+    end
   end
 
 
@@ -420,23 +426,31 @@ class MesaTest < Thor
     end
     m = Mesa.download(version_number: mesa_version, new_mesa_dir: mesa_dir,
                       use_svn: options[:svn])
-    m.clean
-    m.install
+    begin
+      m.clean
+      m.install
+    rescue MesaDirError
+      shell.say "\nFailed in compiling MESA r-#{m.version_number}.", :red
+    else
+      check_mesa(m)
+      update_mesa(mesa: m, diff: diff, mod: options[:module].downcase.to_sym)
 
-    m = create_and_check_mesa(mesa_dir: mesa_dir, diff: diff,
-                              mod: options[:module].downcase.to_sym,
-                              use_svn: options[:svn])
+      # m = create_and_check_mesa(mesa_dir: mesa_dir, diff: diff,
+      #                           mod: options[:module].downcase.to_sym,
+      #                           use_svn: options[:svn])
 
-    # run all tests. Don't be fooled, whether or not a diff happens is set
-    # by the diff attribute of the mesa object, set above.
-    m.each_test_run_and_diff(mod: options[:module].downcase.to_sym,
-                             log_results: options[:log])
+      # run all tests. Don't be fooled, whether or not a diff happens is set
+      # by the diff attribute of the mesa object, set above.
+      m.each_test_run_and_diff(mod: options[:module].downcase.to_sym,
+                               log_results: options[:log])
+    ensure
+      # submit all version and test data
+      successfully_submitted = s.submit_revision(m)
 
-    # submit all tests
-    successfully_submitted = s.submit_revision(m)
-
-    # if requested, and if submission successful, destroy the directory
-    m.destroy if successfully_submitted && options[:destroy]
+      # if requested, installation and submission are successful, destroy the
+      # directory
+      m.destroy if successfully_submitted && options[:destroy] && m.installed?
+    end
   end  
 
   private
@@ -464,17 +478,24 @@ class MesaTest < Thor
     s
   end
 
-  def create_and_check_mesa(mesa_dir:, diff: true, mod: :all, use_svn: true)
-    m = Mesa.new mesa_dir: mesa_dir, use_svn: use_svn
-    unless m.installed?
+  def create_and_check_mesa(mesa_dir:, use_svn: true, diff: true, mod: :all)
+    m = Mesa.new(mesa_dir: mesa_dir, use_svn: use_svn)
+    check_mesa(m)
+    update_mesa(mesa: m, diff: diff, mod: mod)
+    m
+  end
+
+  def check_mesa(mesa)
+    unless mesa.downloaded?
       raise MesaDirError, "Invalid MESA_DIR: #{mesa_dir}. Please download " \
       'and install a valid MESA version or provide the path to one.'
     end
-    m.load_test_source_data(mod: mod)
+  end
 
+  def update_mesa(mesa:, diff: true, mod: :all)
+    mesa.load_test_source_data(mod: mod)
     # choose whether to update checksums
-    m.update_checksums = !diff
-    m
+    mesa.update_checksums = !diff
   end
 
   def create_and_check_test_case(mesa:, test_case_name:, mod: :all)

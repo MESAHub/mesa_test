@@ -507,7 +507,7 @@ class MesaTest < Thor
     # this should care about the value in `mod`. Current behavior is only
     # appropriate if `mod` is :all.
     msg << MesaTestCase.modules.map do |this_mod|
-      File.join(m.test_suite_dir(mod: this_mod), 'do1_test_source')
+      File.join(mesa.test_suite_dir(mod: this_mod), 'do1_test_source')
     end.join(' or ')
     msg << '.'
     raise TestCaseDirError, msg

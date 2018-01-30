@@ -51,16 +51,22 @@ class MesaTest < Thor
 
   With --submit option, upload results to MESATestHub. By default, this is on.
   To run without submission, use --no-submit.
+
+  With --svn option, confirm version number with svn rather than trusting 
+  self-reported version number. By default, this is on. To run without using
+  svn, use --no-svn.
   LONGDESC
   option :diff, type: :boolean, default: false
   option :force, type: :boolean, aliases: '-f'
   option :log, type: :boolean, default: true
   option :module, type: :string, default: :all
   option :submit, type: :boolean, default: true
+  option :svn, type: :boolean, default: true
   def test_one(mesa_dir, test_case_name)
     s = create_and_check_submitter(force: options[:force]) if options[:submit]
     m = create_and_check_mesa(mesa_dir: mesa_dir, diff: options[:diff],
-                              mod: options[:module].downcase.to_sym)
+                              mod: options[:module].downcase.to_sym,
+                              use_svn: options[:svn])
     t = create_and_check_test_case(mesa: m, test_case_name: test_case_name,
                                    mod: options[:module].downcase.to_sym)
 
@@ -332,12 +338,17 @@ class MesaTest < Thor
 
   With --module option, select which module to search through, with the default
   being "all". Example: --module=star.
+
+  With --svn option, confirm version number with svn rather than trusting 
+  self-reported version number. By default, this is on. To run without using
+  svn, use --no-svn.  
   LONGDESC
   option :diff, type: :boolean, default: false
   option :destroy, type: :boolean
   option :log, type: :boolean, default: true
   option :force, type: :boolean, aliases: '-f'
   option :module, type: :string, aliases: '-m', default: 'all'
+  option :svn, type: :boolean, default: true
   def install_and_test_all(version, mesa_dir)
     s = create_and_check_submitter(force: options[:force])
     mesa_version, diff = filter_version_and_diff(version, s)
@@ -351,7 +362,8 @@ class MesaTest < Thor
     m.install
 
     m = create_and_check_mesa(mesa_dir: mesa_dir, diff: diff,
-                              mod: options[:module].downcase.to_sym)
+                              mod: options[:module].downcase.to_sym,
+                              use_svn: options[:svn])
 
     # run all tests. Don't be fooled, whether or not a diff happens is set
     # by the diff attribute of the mesa object, set above.

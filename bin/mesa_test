@@ -86,7 +86,7 @@ class MesaTest < Thor
     puts "Done.\n"
   end
 
-  desc 'test_all MESA_DIR', 'run, check, and submit all test cases'
+  desc 'test_all MESA_DIR', 'DEPRECATED: please use test_revision'
   long_desc <<-LONGDESC
   Run and check all test cases residing in MESA_DIR/star/test_suite. Then
   report results to MesaTestHub. Specifically, runs and checks all tests
@@ -213,7 +213,7 @@ class MesaTest < Thor
     puts "Done.\n"
   end
 
-  desc 'submit_all MESA_DIR', 'submit all [previously run] test cases'
+  desc 'submit_all MESA_DIR', 'DEPRECATED: please use submit_revision'
   long_desc <<-LONGDESC
   Load results for all test cases residing in MESA_DIR/star/test_suite. Then
   submit results to MesaTestHub. Specifically, loads and submits all tests
@@ -301,8 +301,8 @@ class MesaTest < Thor
     m.install
   end
 
-  desc 'install_and_test_all VERSION_NUMBER MESA_DIR', 'download and install '\
-  'mesa release VERSION_NUMBER to directory MESA_DIR and run/submit all tests'
+  desc 'install_and_test_all VERSION_NUMBER MESA_DIR', 'DEPRECATED: use ' \
+  'install_and_test_revision instead.'
   long_desc <<-LONGDESC
   Calls to svn to install mesa release VERSION_NUMBER into the directory
   MESA_DIR. Basically just an svn checkout followed by going into the directory

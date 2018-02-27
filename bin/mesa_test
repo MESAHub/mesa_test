@@ -11,9 +11,29 @@ else
 end
 
 require 'thor'
+require 'yaml'
 
 class MesaTest < Thor
   DEVELOPMENT_URI = 'http://localhost:3000'.freeze
+
+  class_option :force, desc: 'When submitting, assume submission data in ' +
+                             '~/.mesa_test.yml are correct rather than ' \
+                             'checking with user.',
+                             type: :boolean, default: false, aliases: '-f'
+  class_option :submit, desc: 'Submit results (if any) to MesaTestHub.',
+                        type: :boolean, default: true
+  class_option :svn, desc: 'Use svn to gather log/version data if needed.',
+                     type: :boolean, default: true
+  class_option :module, desc: 'Which module to test and/or submit, if applicable.',
+                        type: :string, default: 'all', aliases: '-m'
+  class_option :set_sdk, desc: 'Specify SDK/no SDK. Should pair with ' + 
+                         '--using-sdk or --no-using-sdk. You probably ' +
+                         "don't want this.", type: :boolean,
+                         default: false
+  class_option :using_sdk, desc: 'When running tests, assume we are using ' \
+                           'the SDK and automatically determine SDK version. '\
+                           'Ignored unless using --set-sdk).', type: :boolean,
+                           default: true
 
   desc 'setup [CONFIG_FILE]', 'Setup MesaTestHub config file.'
   long_desc <<-LONGDESC
@@ -36,38 +56,40 @@ class MesaTest < Thor
   searched/concatenated in this order:
 
   #{MesaTestCase.modules.map { |mod| '    ' + mod.to_s }.join(', ')}
-
-  With --diff option, assume the checksums are up-to-date (behave like
-  each_test_run_and_diff), off by default.
-
-  With --force option, skip confirmation of computer details, assuming values
-  in ~/.mesa_test.yml are correct.
-
-  With --module option, select which module to search through, with the default
-  being "all" (search all modules in order). Example: --module=star.
-
-  With --log option, save yml file of test results in test directory, on
-  by default. Shut off with --no-log.
-
-  With --submit option, upload results to MESATestHub. By default, this is on.
-  To run without submission, use --no-submit.
-
-  With --svn option, confirm version number with svn rather than trusting 
-  self-reported version number. By default, this is on. To run without using
-  svn, use --no-svn.
   LONGDESC
-  option :diff, type: :boolean, default: false
-  option :force, type: :boolean, aliases: '-f'
-  option :log, type: :boolean, default: true
-  option :module, type: :string, default: :all
-  option :submit, type: :boolean, default: true
-  option :svn, type: :boolean, default: true
+
+  # With --diff option, assume the checksums are up-to-date (behave like
+  # each_test_run_and_diff), off by default.
+
+  # With --force option, skip confirmation of computer details, assuming values
+  # in ~/.mesa_test.yml are correct.
+
+  # With --module option, select which module to search through, with the default
+  # being "all" (search all modules in order). Example: --module=star.
+
+  # With --log option, save yml file of test results in test directory, on
+  # by default. Shut off with --no-log.
+
+  # With --submit option, upload results to MESATestHub. By default, this is on.
+  # To run without submission, use --no-submit.
+
+  # With --svn option, confirm version number with svn rather than trusting 
+  # self-reported version number. By default, this is on. To run without using
+  # svn, use --no-svn.
+  # LONGDESC
+  option :diff, type: :boolean, default: false, desc: 'Assume checksums are ' + 
+                'up to date and perform diff'
+  # option :force, type: :boolean, aliases: '-f'
+  option :log, type: :boolean, default: true, desc: 'Save yml file of test ' \
+               'results in test case directory.'
+  # option :module, type: :string, default: :all
+  # option :submit, type: :boolean, default: true
+  # option :svn, type: :boolean, default: true
   def test_one(mesa_dir, test_case_name)
     s = create_and_check_submitter(force: options[:force]) if options[:submit]
     m = create_and_check_mesa(mesa_dir: mesa_dir, diff: options[:diff],
                               mod: options[:module].downcase.to_sym,
-                              use_svn: options[:svn],
-                              using_sdk: s.compiler == 'SDK')
+                              use_svn: options[:svn], using_sdk: using_sdk?(s))
     t = create_and_check_test_case(mesa: m, test_case_name: test_case_name,
                                    mod: options[:module].downcase.to_sym)
 
@@ -87,52 +109,54 @@ class MesaTest < Thor
     puts "Done.\n"
   end
 
-  desc 'test_all MESA_DIR', 'DEPRECATED: please use test_revision'
-  long_desc <<-LONGDESC
-  Run and check all test cases residing in MESA_DIR/star/test_suite. Then
-  report results to MesaTestHub. Specifically, runs and checks all tests
-  detailed in MESA_DIR/star/test_suite/do1_test_source.
+  # desc 'test_all MESA_DIR', 'DEPRECATED: please use test_revision'
+  # long_desc <<-LONGDESC
+  # Run and check all test cases residing in MESA_DIR/star/test_suite. Then
+  # report results to MesaTestHub. Specifically, runs and checks all tests
+  # detailed in MESA_DIR/star/test_suite/do1_test_source.
+  # LONGDESC
 
-  With --diff option, assume the checksums are up-to-date (behave like
-  each_test_run_and_diff), off by default.
+  # # With --diff option, assume the checksums are up-to-date (behave like
+  # # each_test_run_and_diff), off by default.
 
-  With --force option, skip confirmation of computer details, assuming values
-  in ~/.mesa_test.yml are correct. Only relevant if --submit option is on
-  (by default it is).
+  # # With --force option, skip confirmation of computer details, assuming values
+  # # in ~/.mesa_test.yml are correct. Only relevant if --submit option is on
+  # # (by default it is).
 
-  With --module option, select which module to search through, with the default
-  being "all" (search all modules in order). Example: --module=star.
+  # # With --module option, select which module to search through, with the default
+  # # being "all" (search all modules in order). Example: --module=star.
 
-  With --log option, save yml file of test results in test directory and a
-  summary in the test suite directory. On by default. Shut off with --no-log.
+  # # With --log option, save yml file of test results in test directory and a
+  # # summary in the test suite directory. On by default. Shut off with --no-log.
 
-  With --submit option, upload results to MESATestHub. By default, this is on.
-  To run without submission, use --no-submit.
+  # # With --submit option, upload results to MESATestHub. By default, this is on.
+  # # To run without submission, use --no-submit.
 
-  With --svn option, confirm version number with svn rather than trusting 
-  self-reported version number. By default, this is on. To run without using
-  svn, use --no-svn.
-  LONGDESC
-  option :diff, type: :boolean, default: false
-  option :force, type: :boolean, aliases: '-f'
-  option :log, type: :boolean, default: true
-  option :module, type: :string, default: :all
-  option :submit, type: :boolean, default: true
-  option :svn, type: :boolean, default: true
-  def test_all(mesa_dir)
-    s = create_and_check_submitter(force: options[:force]) if options[:submit]
-    m = create_and_check_mesa(mesa_dir: mesa_dir, diff: options[:diff],
-                              mod: options[:module].downcase.to_sym,
-                              use_svn: options[:svn],
-                              using_sdk: s.compiler == 'SDK')
+  # # With --svn option, confirm version number with svn rather than trusting 
+  # # self-reported version number. By default, this is on. To run without using
+  # # svn, use --no-svn.
+  # # LONGDESC
+  # option :diff, type: :boolean, default: false, desc: 'Assume checksums are ' + 
+  #               'up to date and perform diff'
+  # # option :force, type: :boolean, aliases: '-f'
+  # option :log, type: :boolean, default: true, desc: 'Save yml file of test ' \
+  #              'results in test case directory.'
+  # # option :module, type: :string, default: :all
+  # # option :submit, type: :boolean, default: true
+  # # option :svn, type: :boolean, default: true
+  # def test_all(mesa_dir)
+  #   s = create_and_check_submitter(force: options[:force]) if options[:submit]
+  #   m = create_and_check_mesa(mesa_dir: mesa_dir, diff: options[:diff],
+  #                             mod: options[:module].downcase.to_sym,
+  #                             use_svn: options[:svn], using_sdk: using_sdk?(s))
 
-    # run all tests
-    m.each_test_run_and_diff(log_results: options[:log],
-                             mod: options[:module].downcase.to_sym)
+  #   # run all tests
+  #   m.each_test_run_and_diff(log_results: options[:log],
+  #                            mod: options[:module].downcase.to_sym)
 
-    # submit all tests
-    s.submit_all(m, options[:module].downcase.to_sym) if options[:submit]
-  end
+  #   # submit all tests
+  #   s.submit_all(m, options[:module].downcase.to_sym) if options[:submit]
+  # end
 
   desc 'test_revision MESA_DIR', 'test and submit all tests as a packaged version'
   long_desc <<-LONGDESC
@@ -141,39 +165,41 @@ class MesaTest < Thor
   detailed in MESA_DIR/star/test_suite/do1_test_source. Also submit version
   information with test instances. Submits all test instances and version data
   in a single request rather than case-by-case in `test_all`.
-
-  With --diff option, assume the checksums are up-to-date (behave like
-  each_test_run_and_diff), off by default.
-
-  With --force option, skip confirmation of computer details, assuming values
-  in ~/.mesa_test.yml are correct. Only relevant if --submit option is on
-  (by default it is).
-
-  With --module option, select which module to search through, with the default
-  being "all" (search all modules in order). Example: --module=star.
-
-  With --log option, save yml file of test results in test directory and a
-  summary in the test suite directory. On by default. Shut off with --no-log.
-
-  With --submit option, upload results to MESATestHub. By default, this is on.
-  To run without submission, use --no-submit.
-
-  With --svn option, get version info (number, author, commit message) from
-  svn. By default, this is on. To shut off, use --no-svn. If off, no author or
-  commit message are saved.
   LONGDESC
-  option :diff, type: :boolean, default: false
-  option :force, type: :boolean, aliases: '-f'
-  option :log, type: :boolean, default: true
-  option :module, type: :string, default: :all
-  option :submit, type: :boolean, default: true
-  option :svn, type: :boolean, default: true  
+
+  # With --diff option, assume the checksums are up-to-date (behave like
+  # each_test_run_and_diff), off by default.
+
+  # With --force option, skip confirmation of computer details, assuming values
+  # in ~/.mesa_test.yml are correct. Only relevant if --submit option is on
+  # (by default it is).
+
+  # With --module option, select which module to search through, with the default
+  # being "all" (search all modules in order). Example: --module=star.
+
+  # With --log option, save yml file of test results in test directory and a
+  # summary in the test suite directory. On by default. Shut off with --no-log.
+
+  # With --submit option, upload results to MESATestHub. By default, this is on.
+  # To run without submission, use --no-submit.
+
+  # With --svn option, get version info (number, author, commit message) from
+  # svn. By default, this is on. To shut off, use --no-svn. If off, no author or
+  # commit message are saved.
+  # LONGDESC
+  option :diff, type: :boolean, default: false, desc: 'Assume checksums are ' + 
+                'up to date and perform diff'
+  # option :force, type: :boolean, aliases: '-f'
+  option :log, type: :boolean, default: true, desc: 'Save yml file of test ' \
+               'results in test case directory.'
+  # option :module, type: :string, default: :all
+  # option :submit, type: :boolean, default: true
+  # option :svn, type: :boolean, default: true  
   def test_revision(mesa_dir)
     s = create_and_check_submitter(force: options[:force]) if options[:submit]
     m = create_and_check_mesa(mesa_dir: mesa_dir, diff: options[:diff],
                               mod: options[:module].downcase.to_sym,
-                              use_svn: options[:svn],
-                              using_sdk: s.compiler == 'SDK')
+                              use_svn: options[:svn], using_sdk: using_sdk?(s))
 
     # run all tests
     m.each_test_run_and_diff(log_results: options[:log],
@@ -192,20 +218,21 @@ class MesaTest < Thor
   no module is specified). Modules are searched/concatenated in this order:
 
   #{MesaTestCase.modules.map { |mod| '    ' + mod.to_s }.join(', ')}
-
-  With --force option, skip confirmation of computer details, assuming values
-  in ~/.mesa_test.yml are correct.
-
-  With --module option, select which module to search through, with the default
-  being "all". Example: --module=star.
   LONGDESC
-  option :force, type: :boolean, aliases: '-f'
-  option :module, type: :string, aliases: '-m', default: 'all'
+
+  # With --force option, skip confirmation of computer details, assuming values
+  # in ~/.mesa_test.yml are correct.
+
+  # With --module option, select which module to search through, with the default
+  # being "all". Example: --module=star.
+  # LONGDESC
+  # option :force, type: :boolean, aliases: '-f'
+  # option :module, type: :string, aliases: '-m', default: 'all'
   def submit_one(mesa_dir, test_case_name)
     s = create_and_check_submitter(force: options[:force])
     m = create_and_check_mesa(mesa_dir: mesa_dir,
                               mod: options[:module].downcase.to_sym,
-                              using_sdk: s.compiler == 'SDK')
+                              using_sdk: using_sdk?(s))
     t = create_and_check_test_case(mesa: m, test_case_name: test_case_name,
                                    mod: options[:module].downcase.to_sym)
     # load test results
@@ -217,38 +244,38 @@ class MesaTest < Thor
     puts "Done.\n"
   end
 
-  desc 'submit_all MESA_DIR', 'DEPRECATED: please use submit_revision'
-  long_desc <<-LONGDESC
-  Load results for all test cases residing in MESA_DIR/star/test_suite. Then
-  submit results to MesaTestHub. Specifically, loads and submits all tests
-  detailed in MESA_DIR/star/test_suite/do1_test_source.
+  # desc 'submit_all MESA_DIR', 'DEPRECATED: please use submit_revision'
+  # long_desc <<-LONGDESC
+  # Load results for all test cases residing in MESA_DIR/star/test_suite. Then
+  # submit results to MesaTestHub. Specifically, loads and submits all tests
+  # detailed in MESA_DIR/star/test_suite/do1_test_source.
+  # LONGDESC
 
-  With --force option, skip confirmation of computer details, assuming values
-  in ~/.mesa_test.yml are correct.
+  # # With --force option, skip confirmation of computer details, assuming values
+  # # in ~/.mesa_test.yml are correct.
 
-  With --module option, select which module to search through, with the default
-  being "all" (search all modules in order). Example: --module=star.
+  # # With --module option, select which module to search through, with the default
+  # # being "all" (search all modules in order). Example: --module=star.
 
-  With --svn option, confirm version number with svn rather than trusting 
-  self-reported version number. By default, this is on. To run without using
-  svn, use --no-svn.  
-  LONGDESC
-  option :force, type: :boolean, aliases: '-f'
-  option :module, type: :string, aliases: '-m', default: 'all'
-  option :svn, type: :boolean, default: true
-  def submit_all(mesa_dir)
-    s = create_and_check_submitter(force: options[:force])
-    m = create_and_check_mesa(mesa_dir: mesa_dir,
-                              mod: options[:module].downcase.to_sym,
-                              use_svn: options[:svn],
-                              using_sdk: s.compiler == 'SDK')
+  # # With --svn option, confirm version number with svn rather than trusting 
+  # # self-reported version number. By default, this is on. To run without using
+  # # svn, use --no-svn.  
+  # # LONGDESC
+  # # option :force, type: :boolean, aliases: '-f'
+  # # option :module, type: :string, aliases: '-m', default: 'all'
+  # # option :svn, type: :boolean, default: true
+  # def submit_all(mesa_dir)
+  #   s = create_and_check_submitter(force: options[:force])
+  #   m = create_and_check_mesa(mesa_dir: mesa_dir,
+  #                             mod: options[:module].downcase.to_sym,
+  #                             use_svn: options[:svn], using_sdk: using_sdk?(s))
 
-    # load all test data
-    m.each_test_load_results(mod: options[:module].downcase.to_sym)
+  #   # load all test data
+  #   m.each_test_load_results(mod: options[:module].downcase.to_sym)
 
-    # submit all tests
-    s.submit_all(m, options[:module].downcase.to_sym)
-  end
+  #   # submit all tests
+  #   s.submit_all(m, options[:module].downcase.to_sym)
+  # end
 
   desc 'submit_revision MESA_DIR', 'submit version with pre-run test cases'
   long_desc <<-LONGDESC
@@ -258,26 +285,26 @@ class MesaTest < Thor
   (number, author, and commit message). Unlike submit_all, this submits all
   test cases AND version info in a single request rather than just the cases
   in series.
-
-  With --force option, skip confirmation of computer details, assuming values
-  in ~/.mesa_test.yml are correct.
-
-  With --module option, select which module to search through, with the default
-  being "all" (search all modules in order). Example: --module=star.
-
-  With --svn option, get version info (number, author, commit message) from
-  svn. By default, this is on. To shut off, use --no-svn. If off, no author or
-  commit message are submitted.
   LONGDESC
-  option :force, type: :boolean, aliases: '-f'
-  option :module, type: :string, aliases: '-m', default: 'all'
-  option :svn, type: :boolean, default: true  
+
+  # With --force option, skip confirmation of computer details, assuming values
+  # in ~/.mesa_test.yml are correct.
+
+  # With --module option, select which module to search through, with the default
+  # being "all" (search all modules in order). Example: --module=star.
+
+  # With --svn option, get version info (number, author, commit message) from
+  # svn. By default, this is on. To shut off, use --no-svn. If off, no author or
+  # commit message are submitted.
+  # LONGDESC
+  # option :force, type: :boolean, aliases: '-f'
+  # option :module, type: :string, aliases: '-m', default: 'all'
+  # option :svn, type: :boolean, default: true  
   def submit_revision(mesa_dir)
     s = create_and_check_submitter(force: options[:force])
     m = create_and_check_mesa(mesa_dir: mesa_dir,
                               mod: options[:module].downcase.to_sym,
-                              use_svn: options[:svn],
-                              using_sdk: s.compiler == 'SDK')
+                              use_svn: options[:svn], using_sdk: using_sdk?(s))
     begin
       m.check_installation
     rescue MesaDirError
@@ -307,83 +334,86 @@ class MesaTest < Thor
     m.install
   end
 
-  desc 'install_and_test_all VERSION_NUMBER MESA_DIR', 'DEPRECATED: use ' \
-  'install_and_test_revision instead.'
-  long_desc <<-LONGDESC
-  Calls to svn to install mesa release VERSION_NUMBER into the directory
-  MESA_DIR. Basically just an svn checkout followed by going into the directory
-  and running ./clean and ./install. SDK or compilers must be set up prior.
-  Once installation is complete, run the test suite, and report results to
-  MesaTestHub. Does not affect the user's MESA_DIR or other environment
-  variables. This is basically a shortcut for running
+  # desc 'install_and_test_all VERSION_NUMBER MESA_DIR', 'DEPRECATED: use ' \
+  # 'install_and_test_revision instead.'
+  # long_desc <<-LONGDESC
+  # Calls to svn to install mesa release VERSION_NUMBER into the directory
+  # MESA_DIR. Basically just an svn checkout followed by going into the directory
+  # and running ./clean and ./install. SDK or compilers must be set up prior.
+  # Once installation is complete, run the test suite, and report results to
+  # MesaTestHub. Does not affect the user's MESA_DIR or other environment
+  # variables. This is basically a shortcut for running
 
-    `mesa_test install SOME_VERSION SOME_DIR`
+  #   `mesa_test install SOME_VERSION SOME_DIR`
 
-  followed by
+  # followed by
 
-    `mesa_test test_all SOME_DIR`
+  #   `mesa_test test_all SOME_DIR`
 
-  If VERSION_NUMBER is 'non-paxton' or 'non_paxton', then the most recent
-  commit by anyone other than Bill Paxton ('bill_paxton') is tested and the
-  --diff flag is ignored and set to false. Note that using 'HEAD' for version
-  number will automatically select the most recent release, regardless of the
-  author.
+  # If VERSION_NUMBER is 'non-paxton' or 'non_paxton', then the most recent
+  # commit by anyone other than Bill Paxton ('bill_paxton') is tested and the
+  # --diff flag is ignored and set to false. Note that using 'HEAD' for version
+  # number will automatically select the most recent release, regardless of the
+  # author.
+  # LONGDESC
 
-  With --diff option, assume the checksums are up-to-date (behave like
-  each_test_run_and_diff), off by default.
+  # # With --diff option, assume the checksums are up-to-date (behave like
+  # # each_test_run_and_diff), off by default.
 
-  Use flag --destroy to self destruct MESA_DIR after successful test
-  submission. Essentially does rm -rf MESA_DIR after the test suite. Useful
-  for automated testing without piling up disk space.
+  # # Use flag --destroy to self destruct MESA_DIR after successful test
+  # # submission. Essentially does rm -rf MESA_DIR after the test suite. Useful
+  # # for automated testing without piling up disk space.
 
-  Use flag --force to skip confirmation of computer details if they can be
-  read from ~/.mesa_test.yml.
+  # # Use flag --force to skip confirmation of computer details if they can be
+  # # read from ~/.mesa_test.yml.
 
-  With --log option, save yml file of test results in test directory and a
-  summary in the test suite directory. On by default. Shut off with --no-log.
+  # # With --log option, save yml file of test results in test directory and a
+  # # summary in the test suite directory. On by default. Shut off with --no-log.
 
-  With --module option, select which module to search through, with the default
-  being "all". Example: --module=star.
+  # # With --module option, select which module to search through, with the default
+  # # being "all". Example: --module=star.
 
-  With --svn option, confirm version number with svn rather than trusting 
-  self-reported version number. By default, this is on. To run without using
-  svn, use --no-svn.  
-  LONGDESC
-  option :diff, type: :boolean, default: false
-  option :destroy, type: :boolean
-  option :log, type: :boolean, default: true
-  option :force, type: :boolean, aliases: '-f'
-  option :module, type: :string, aliases: '-m', default: 'all'
-  option :svn, type: :boolean, default: true
-  def install_and_test_all(version, mesa_dir)
-    s = create_and_check_submitter(force: options[:force])
-    mesa_version, diff = filter_version_and_diff(version, s)
-    if mesa_version.nil?
-      puts 'No commits by anyone other than Bill Paxton since '\
-        "r#{s.last_tested}. Exiting."
-      return
-    end
-    m = Mesa.download(version_number: mesa_version, new_mesa_dir: mesa_dir,
-                      using_sdk: s.compiler == 'SDK')
-    m.clean
-    m.install
+  # # With --svn option, confirm version number with svn rather than trusting 
+  # # self-reported version number. By default, this is on. To run without using
+  # # svn, use --no-svn.  
+  # # LONGDESC
+  # option :diff, type: :boolean, default: false, desc: 'Assume checksums are ' + 
+  #               'up to date and perform diff'
+  # option :destroy, type: :boolean, desc: 'Delete mesa installation upon ' \
+  #                  'submission of complete results.', default: false
+  # option :log, type: :boolean, default: true, desc: 'Save yml file of test ' \
+  #              'results in test case directory.'
+  # # option :force, type: :boolean, aliases: '-f'
+  # # option :module, type: :string, aliases: '-m', default: 'all'
+  # # option :svn, type: :boolean, default: true
+  # def install_and_test_all(version, mesa_dir)
+  #   s = create_and_check_submitter(force: options[:force])
+  #   mesa_version, diff = filter_version_and_diff(version, s)
+  #   if mesa_version.nil?
+  #     puts 'No commits by anyone other than Bill Paxton since '\
+  #       "r#{s.last_tested}. Exiting."
+  #     return
+  #   end
+  #   m = Mesa.download(version_number: mesa_version, new_mesa_dir: mesa_dir,
+  #                     using_sdk: using_sdk?(s))
+  #   m.clean
+  #   m.install
 
-    m = create_and_check_mesa(mesa_dir: mesa_dir, diff: diff,
-                              mod: options[:module].downcase.to_sym,
-                              use_svn: options[:svn],
-                              using_sdk: s.compiler == 'SDK')
+  #   m = create_and_check_mesa(mesa_dir: mesa_dir, diff: diff,
+  #                             mod: options[:module].downcase.to_sym,
+  #                             use_svn: options[:svn], using_sdk: using_sdk?(s))
 
-    # run all tests. Don't be fooled, whether or not a diff happens is set
-    # by the diff attribute of the mesa object, set above.
-    m.each_test_run_and_diff(mod: options[:module].downcase.to_sym,
-                             log_results: options[:log])
+  #   # run all tests. Don't be fooled, whether or not a diff happens is set
+  #   # by the diff attribute of the mesa object, set above.
+  #   m.each_test_run_and_diff(mod: options[:module].downcase.to_sym,
+  #                            log_results: options[:log])
 
-    # submit all tests
-    successfully_submitted = s.submit_all(m, options[:module].downcase.to_sym)
+  #   # submit all tests
+  #   successfully_submitted = s.submit_all(m, options[:module].downcase.to_sym)
 
-    # if requested, and if submission successful, destroy the directory
-    m.destroy if successfully_submitted && options[:destroy]
-  end
+  #   # if requested, and if submission successful, destroy the directory
+  #   m.destroy if successfully_submitted && options[:destroy]
+  # end
 
   desc 'install_and_test_revision VERSION_NUMBER MESA_DIR', 'download and '\
   'install mesa release VERSION_NUMBER to directory MESA_DIR, run all tests,'\
@@ -409,35 +439,40 @@ class MesaTest < Thor
   --diff flag is ignored and set to false. Note that using 'HEAD' for version
   number will automatically select the most recent release, regardless of the
   author.
-
-  With --diff option, assume the checksums are up-to-date (behave like
-  each_test_run_and_diff), off by default.
-
-  Use flag --destroy to self destruct MESA_DIR after successful test
-  submission. Essentially does rm -rf MESA_DIR after the test suite. Useful
-  for automated testing without piling up disk space.
-
-  Use flag --force to skip confirmation of computer details if they can be
-  read from ~/.mesa_test.yml.
-
-  With --log option, save yml file of test results in test directory and a
-  summary in the test suite directory. On by default. Shut off with --no-log.
-
-  With --module option, select which module to search through, with the default
-  being "all". Example: --module=star.
-
-  With --svn option, get version info (number, author, commit message) from
-  svn. By default, this is on. To shut off, use --no-svn. If off, no author or
-  commit message are submitted.  
   LONGDESC
-  option :diff, type: :boolean, default: false
-  option :destroy, type: :boolean
-  option :log, type: :boolean, default: true
-  option :force, type: :boolean, aliases: '-f'
-  option :module, type: :string, aliases: '-m', default: 'all'
-  option :svn, type: :boolean, default: true
+
+  # With --diff option, assume the checksums are up-to-date (behave like
+  # each_test_run_and_diff), off by default.
+
+  # Use flag --destroy to self destruct MESA_DIR after successful test
+  # submission. Essentially does rm -rf MESA_DIR after the test suite. Useful
+  # for automated testing without piling up disk space.
+
+  # Use flag --force to skip confirmation of computer details if they can be
+  # read from ~/.mesa_test.yml.
+
+  # With --log option, save yml file of test results in test directory and a
+  # summary in the test suite directory. On by default. Shut off with --no-log.
+
+  # With --module option, select which module to search through, with the default
+  # being "all". Example: --module=star.
+
+  # With --svn option, get version info (number, author, commit message) from
+  # svn. By default, this is on. To shut off, use --no-svn. If off, no author or
+  # commit message are submitted.  
+  # LONGDESC
+  option :diff, type: :boolean, default: false, desc: 'Assume checksums are ' + 
+                'up to date and perform diff'
+  option :destroy, type: :boolean, desc: 'Delete mesa installation upon ' \
+                   'submission of complete results.', default: false
+  option :log, type: :boolean, default: true, desc: 'Save yml file of test ' \
+               'results in test case directory.'
+  # option :force, type: :boolean, aliases: '-f'
+  # option :module, type: :string, aliases: '-m', default: 'all'
+  # option :svn, type: :boolean, default: true
   def install_and_test_revision(version, mesa_dir)
-    s = create_and_check_submitter(force: options[:force])
+    s = nil  # to make sure using_sdk? below will work properly
+    s = create_and_check_submitter(force: options[:force]) if options[:submit]
     mesa_version, diff = filter_version_and_diff(version, s)
     if mesa_version.nil?
       puts 'No commits by anyone other than Bill Paxton since '\
@@ -445,7 +480,7 @@ class MesaTest < Thor
       return
     end
     m = Mesa.download(version_number: mesa_version, new_mesa_dir: mesa_dir,
-                      use_svn: options[:svn], using_sdk: s.compiler == 'SDK')
+                      use_svn: options[:svn], using_sdk: using_sdk?(s))
     begin
       m.clean
       m.install
@@ -465,7 +500,8 @@ class MesaTest < Thor
                                log_results: options[:log])
     ensure
       # submit all version and test data
-      successfully_submitted = s.submit_revision(m)
+      successfully_submitted = false
+      successfully_submitted = s.submit_revision(m) if options[:submit]
 
       # if requested, installation and submission are successful, destroy the
       # directory
@@ -539,6 +575,36 @@ class MesaTest < Thor
       [Mesa.last_non_paxton_revision(submitter.last_tested), false]
     else
       [version, options[:diff]]
+    end
+  end
+
+  # determine whether or not we can assume the test should be / was run with
+  # the SDK. This results should only be relevant if a test is GOING TO BE RUN.
+  # If it has already been run, then the compiler and compiler version have
+  # already been set (or the opportunity was lost, either way this won't help.)
+  # 
+  # This gets used in a lot of places where it probably isn't necessary, just 
+  # to prevent problems later on if things change, as it does no harm when it
+  # doesn't help.
+  # 
+  # The only parameter is a submitter, if there is one to lean on. If there
+  # isn't, it's no problem.
+  def using_sdk?(s = nil)
+    # did user specify so? Trust them
+    if options[:set_sdk]
+      options[:using_sdk]
+    # are we submitting? scrape compiler info from that
+    elsif s
+      s.compiler == 'SDK'
+    # we don't have a submitter... need to read config file (same thing 
+    # submitter is doing)
+    elsif File.exist?(File.join(ENV['HOME'], '.mesa_test.yml'))
+      data = YAML.load(File.read(File.join(ENV['HOME'], '.mesa_test.yml')))
+      data['compiler'] == 'SDK'
+    # nothing works. Don't tell mesa that we are using SDK (we could still be
+    # using it, but it's up to a future submitter to tell the web site so.)
+    else
+      false
     end
   end
 end

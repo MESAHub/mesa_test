@@ -468,8 +468,9 @@ class Mesa
       "svn://svn.code.sf.net/p/mesa/code/trunk #{new_mesa_dir}"
     )
     unless success
-      raise MesaDirError, 'Encountered a problem in download mesa ' \
-                          "revision #{version_number}."
+      raise MesaDirError, 'Encountered a problem in downloading mesa ' \
+                          "revision #{version_number}. Perhaps svn isn't " \
+                          'working properly?'
     end
     Mesa.new(mesa_dir: new_mesa_dir, use_svn: use_svn)
   end
@@ -1380,7 +1381,7 @@ class MesaTestCase
   end
 
   def get_summary_text
-    lines = IO.readlines(out_file).select do |line|
+    IO.readlines(out_file).select do |line|
       line =~ /^\s*runtime/ 
     end.join
   end

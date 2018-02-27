@@ -231,6 +231,8 @@ e-mail and password will be stored in plain text.'
   end
 
   # create and return hash of parameters for a TestInstance submission
+  # Note: prefer test case's self-reported compiler and compiler version over
+  # user reported
   def submit_params(test_case)
     res = {
       test_case: test_case.test_name,
@@ -241,8 +243,8 @@ e-mail and password will be stored in plain text.'
       runtime_seconds: test_case.runtime_seconds,
       mesa_version: test_case.mesa_version,
       passed: test_case.passed? ? 1 : 0,
-      compiler: compiler,
-      compiler_version: compiler_version,
+      compiler: test_case.compiler || compiler,
+      compiler_version: test_case.compiler_version || compiler_version,
       platform_version: platform_version,
       omp_num_threads: test_case.test_omp_num_threads,
       success_type: test_case.success_type,
@@ -458,7 +460,7 @@ class Mesa
   SVN_URI = 'svn://svn.code.sf.net/p/mesa/code/trunk'.freeze    
 
   attr_reader :mesa_dir, :test_data, :test_names, :test_cases, :shell,
-              :svn_version, :svn_author, :svn_log
+              :svn_version, :svn_author, :svn_log, :using_sdk
   attr_accessor :update_checksums
 
   def self.download(version_number: nil, new_mesa_dir: nil, use_svn: true)
@@ -521,11 +523,12 @@ class Mesa
     nil
   end
 
-  def initialize(mesa_dir: ENV['MESA_DIR'], use_svn: true)
+  def initialize(mesa_dir: ENV['MESA_DIR'], use_svn: true, using_sdk: false)
     # absolute_path ensures that it doesn't matter where commands are executed
     # from
     @mesa_dir = File.absolute_path(mesa_dir)
     @use_svn = use_svn
+    @using_sdk = using_sdk
     @update_checksums = false
 
     # these get populated by calling #load_test_data
@@ -888,7 +891,8 @@ class MesaTestCase
   attr_reader :test_name, :mesa_dir, :mesa, :success_string, :final_model,
               :failure_msg, :success_msg, :photo, :runtime_seconds,
               :test_omp_num_threads, :mesa_version, :shell, :mod, :retries,
-              :backups, :steps, :runtime_minutes, :summary_text
+              :backups, :steps, :runtime_minutes, :summary_text, :compiler,
+              :compiler_version
   attr_accessor :data_names, :data_types, :failure_type, :success_type,
                 :outcome
 
@@ -915,6 +919,12 @@ class MesaTestCase
     @backups = 0
     @steps = 0
     @summary_text = ''
+
+    # this overrides the submitters choice if it is non-nil
+    @compiler = mesa.using_sdk ? 'SDK' : nil
+    # only relevant if @compiler is SDK. Gets set during do_one
+    @compiler_version = nil
+
     unless MesaTestCase.modules.include? mod
       raise TestCaseDirError, "Invalid module: #{mod}. Must be one of: " +
                               MesaTestCase.modules.join(', ')
@@ -1030,6 +1040,14 @@ class MesaTestCase
   # based on $MESA_DIR/star/test_suite/each_test_run_and_diff, revision 10000
   def do_one
     @test_omp_num_threads = omp_num_threads
+    if mesa.using_sdk
+      version_bin = File.join(ENV['MESASDK_ROOT'], 'bin', 'mesasdk_version.sh')
+      # can't use bash_execute because the return value of bash_execute is the
+      # exit status of the commmand (true or false), whereas backticks give the
+      # output (the version string) as the output
+      @compiler_version = `bash -c #{version_bin}`.strip
+      shell.say("Using version #{@compiler_version} of the SDK.", :blue)
+    end
     in_dir do
       FileUtils.touch '.running'
       shell.say("building and running #{test_name}", :blue)
@@ -1060,6 +1078,10 @@ class MesaTestCase
       'steps' => steps,
       'summary_text' => summary_text
     }
+    if compiler == 'SDK'
+      res['compiler'] = 'SDK'
+      res['compiler_version'] = compiler_version
+    end
     File.open(save_file, 'w') { |f| f.write(YAML.dump(res)) }
     shell.say "Successfully saved results to file #{save_file}.\n", :green
   end
@@ -1086,6 +1108,8 @@ class MesaTestCase
     @backups = data['backups'] || @backups
     @steps = data['steps'] || @steps
     @summary_text = data['summary_text'] || @summary_text
+    @compiler = data['compiler'] || @compiler
+    @compiler_version = data['compiler_version'] || @compiler_version
 
     # convert select data to symbols since that is how they are used
     @outcome = @outcome.to_sym if @outcome

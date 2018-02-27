@@ -66,7 +66,8 @@ class MesaTest < Thor
     s = create_and_check_submitter(force: options[:force]) if options[:submit]
     m = create_and_check_mesa(mesa_dir: mesa_dir, diff: options[:diff],
                               mod: options[:module].downcase.to_sym,
-                              use_svn: options[:svn])
+                              use_svn: options[:svn],
+                              using_sdk: s.compiler == 'SDK')
     t = create_and_check_test_case(mesa: m, test_case_name: test_case_name,
                                    mod: options[:module].downcase.to_sym)
 
@@ -122,7 +123,8 @@ class MesaTest < Thor
     s = create_and_check_submitter(force: options[:force]) if options[:submit]
     m = create_and_check_mesa(mesa_dir: mesa_dir, diff: options[:diff],
                               mod: options[:module].downcase.to_sym,
-                              use_svn: options[:svn])
+                              use_svn: options[:svn],
+                              using_sdk: s.compiler == 'SDK')
 
     # run all tests
     m.each_test_run_and_diff(log_results: options[:log],
@@ -170,7 +172,8 @@ class MesaTest < Thor
     s = create_and_check_submitter(force: options[:force]) if options[:submit]
     m = create_and_check_mesa(mesa_dir: mesa_dir, diff: options[:diff],
                               mod: options[:module].downcase.to_sym,
-                              use_svn: options[:svn])
+                              use_svn: options[:svn],
+                              using_sdk: s.compiler == 'SDK')
 
     # run all tests
     m.each_test_run_and_diff(log_results: options[:log],
@@ -201,7 +204,8 @@ class MesaTest < Thor
   def submit_one(mesa_dir, test_case_name)
     s = create_and_check_submitter(force: options[:force])
     m = create_and_check_mesa(mesa_dir: mesa_dir,
-                              mod: options[:module].downcase.to_sym)
+                              mod: options[:module].downcase.to_sym,
+                              using_sdk: s.compiler == 'SDK')
     t = create_and_check_test_case(mesa: m, test_case_name: test_case_name,
                                    mod: options[:module].downcase.to_sym)
     # load test results
@@ -236,7 +240,8 @@ class MesaTest < Thor
     s = create_and_check_submitter(force: options[:force])
     m = create_and_check_mesa(mesa_dir: mesa_dir,
                               mod: options[:module].downcase.to_sym,
-                              use_svn: options[:svn])
+                              use_svn: options[:svn],
+                              using_sdk: s.compiler == 'SDK')
 
     # load all test data
     m.each_test_load_results(mod: options[:module].downcase.to_sym)
@@ -271,7 +276,8 @@ class MesaTest < Thor
     s = create_and_check_submitter(force: options[:force])
     m = create_and_check_mesa(mesa_dir: mesa_dir,
                               mod: options[:module].downcase.to_sym,
-                              use_svn: options[:svn])
+                              use_svn: options[:svn],
+                              using_sdk: s.compiler == 'SDK')
     begin
       m.check_installation
     rescue MesaDirError
@@ -357,13 +363,15 @@ class MesaTest < Thor
         "r#{s.last_tested}. Exiting."
       return
     end
-    m = Mesa.download(version_number: mesa_version, new_mesa_dir: mesa_dir)
+    m = Mesa.download(version_number: mesa_version, new_mesa_dir: mesa_dir,
+                      using_sdk: s.compiler == 'SDK')
     m.clean
     m.install
 
     m = create_and_check_mesa(mesa_dir: mesa_dir, diff: diff,
                               mod: options[:module].downcase.to_sym,
-                              use_svn: options[:svn])
+                              use_svn: options[:svn],
+                              using_sdk: s.compiler == 'SDK')
 
     # run all tests. Don't be fooled, whether or not a diff happens is set
     # by the diff attribute of the mesa object, set above.
@@ -437,7 +445,7 @@ class MesaTest < Thor
       return
     end
     m = Mesa.download(version_number: mesa_version, new_mesa_dir: mesa_dir,
-                      use_svn: options[:svn])
+                      use_svn: options[:svn], using_sdk: s.compiler == 'SDK')
     begin
       m.clean
       m.install
@@ -490,8 +498,9 @@ class MesaTest < Thor
     s
   end
 
-  def create_and_check_mesa(mesa_dir:, use_svn: true, diff: true, mod: :all)
-    m = Mesa.new(mesa_dir: mesa_dir, use_svn: use_svn)
+  def create_and_check_mesa(mesa_dir:, use_svn: true, diff: true, mod: :all,
+                            using_sdk: true)
+    m = Mesa.new(mesa_dir: mesa_dir, use_svn: use_svn, using_sdk: using_sdk)
     check_mesa(m)
     update_mesa(mesa: m, diff: diff, mod: mod)
     m

@@ -93,6 +93,9 @@ class MesaTest < Thor
     t = create_and_check_test_case(mesa: m, test_case_name: test_case_name,
                                    mod: options[:module].downcase.to_sym)
 
+    # shell.say("diff is set to #{options[:diff]}")
+    # shell.say("update_checksums is set to #{m.update_checksums}.")
+
     # clean and run test
     t.clean
     t.do_one

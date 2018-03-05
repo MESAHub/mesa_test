@@ -558,7 +558,7 @@ class Mesa
   end
 
   def log_entry
-    `svn log #{SVN_URI} -r #{version_number}`
+    `svn log #{mesa_dir} -r #{version_number}`
   end
 
   def load_svn_data
@@ -573,7 +573,9 @@ class Mesa
 
   # get version number from svn (preferred method)
   def svn_version_number
-    return `svnversion #{mesa_dir}`.strip.to_i
+    # match output of svn info to a line with the revision, capturing the
+    # number, and defaulting to 0 if none is found.
+    return (/Revision\:\s+(\d+)/.match(`svn info #{mesa_dir}`)[1] || 0).to_i
   rescue Errno::ENOENT
     return 0
   end
@@ -1255,8 +1257,8 @@ class MesaTestCase
     # if this is false, behave like each_test_run_and_diff.  assume
     # the checksum is up-to-date and check it matches after rn and re.
     if @mesa.update_checksums
-      bash_execute("md5sum \"#{final_model}\" > checks.md5")
       puts "md5sum \"#{final_model}\" > checks.md5"
+      bash_execute("md5sum \"#{final_model}\" > checks.md5")
       FileUtils.cp final_model, 'final_check.mod'
 
       # if there's no photo, we won't check the checksum, so we've succeeded

@@ -2,7 +2,7 @@
 
 # if true, submit cases to localhost:3000 and load local mesa_test library
 # rather than system version
-DEVELOPMENT_MODE = true
+DEVELOPMENT_MODE = false
 
 if DEVELOPMENT_MODE
   require_relative '../lib/mesa_test'
@@ -274,9 +274,6 @@ class MesaTest < Thor
                    'submission of complete results.', default: false
   option :log, type: :boolean, default: true, desc: 'Save yml file of test ' \
                'results in test case directory.'
-  # option :force, type: :boolean, aliases: '-f'
-  # option :module, type: :string, aliases: '-m', default: 'all'
-  # option :svn, type: :boolean, default: true
   def install_and_test_revision(version, mesa_dir)
     s = nil  # to make sure using_sdk? below will work properly
     s = create_and_check_submitter(force: options[:force]) if options[:submit]
@@ -296,10 +293,6 @@ class MesaTest < Thor
     else
       check_mesa(m)
       update_mesa(mesa: m, diff: diff, mod: options[:module].downcase.to_sym)
-
-      # m = create_and_check_mesa(mesa_dir: mesa_dir, diff: diff,
-      #                           mod: options[:module].downcase.to_sym,
-      #                           use_svn: options[:svn])
 
       # run all tests. Don't be fooled, whether or not a diff happens is set
       # by the diff attribute of the mesa object, set above.

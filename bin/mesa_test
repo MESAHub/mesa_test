@@ -16,25 +16,6 @@ require 'yaml'
 class MesaTest < Thor
   DEVELOPMENT_URI = 'http://localhost:3000'.freeze
 
-  class_option :force, desc: 'When submitting, assume submission data in ' +
-                             '~/.mesa_test.yml are correct rather than ' \
-                             'checking with user.',
-                             type: :boolean, default: false, aliases: '-f'
-  class_option :submit, desc: 'Submit results (if any) to MesaTestHub.',
-                        type: :boolean, default: true
-  class_option :svn, desc: 'Use svn to gather log/version data if needed.',
-                     type: :boolean, default: true
-  class_option :module, desc: 'Which module to test and/or submit, if applicable.',
-                        type: :string, default: 'all', aliases: '-m'
-  class_option :set_sdk, desc: 'Specify SDK/no SDK. Should pair with ' + 
-                         '--using-sdk or --no-using-sdk. You probably ' +
-                         "don't want this.", type: :boolean,
-                         default: false
-  class_option :using_sdk, desc: 'When running tests, assume we are using ' \
-                           'the SDK and automatically determine SDK version. '\
-                           'Ignored unless using --set-sdk).', type: :boolean,
-                           default: true
-
   desc 'setup [CONFIG_FILE]', 'Setup MesaTestHub config file.'
   long_desc <<-LONGDESC
     If optional CONFIG_FILE is provided, search for that file and load it
@@ -77,6 +58,22 @@ class MesaTest < Thor
   # self-reported version number. By default, this is on. To run without using
   # svn, use --no-svn.
   # LONGDESC
+  option :force, desc: 'When submitting, assume submission data in ' +
+                       '~/.mesa_test.yml are correct rather than checking ' +
+                       'with user.', type: :boolean, default: false,
+                       aliases: '-f'
+  option :submit, desc: 'Submit results (if any) to MesaTestHub.',
+                  type: :boolean, default: true
+  option :module, desc: 'Which module to test and/or submit, if applicable.',
+                  type: :string, default: 'all', aliases: '-m'                  
+  option :svn, desc: 'Use svn to gather log/version data if needed.',
+               type: :boolean, default: true
+  option :set_sdk, desc: 'Specify SDK/no SDK. Should pair with --using-sdk ' +
+                   "or --no-using-sdk. You probably don't want this.",
+                   type: :boolean, default: false
+  option :using_sdk, desc: 'Assume we are using the SDK and automatically ' +
+                     'determine SDK version. Ignored unless using --set-sdk).',
+                     type: :boolean, default: true
   option :diff, type: :boolean, default: false, desc: 'Assume checksums are ' + 
                 'up to date and perform diff'
   # option :force, type: :boolean, aliases: '-f'
@@ -190,6 +187,22 @@ class MesaTest < Thor
   # svn. By default, this is on. To shut off, use --no-svn. If off, no author or
   # commit message are saved.
   # LONGDESC
+  option :force, desc: 'When submitting, assume submission data in ' +
+                       '~/.mesa_test.yml are correct rather than checking ' +
+                       'with user.', type: :boolean, default: false,
+                       aliases: '-f'
+  option :svn, desc: 'Use svn to gather log/version data if needed.',
+               type: :boolean, default: true
+  option :submit, desc: 'Submit results (if any) to MesaTestHub.',
+                  type: :boolean, default: true
+  option :set_sdk, desc: 'Specify SDK/no SDK. Should pair with --using-sdk ' +
+                   "or --no-using-sdk. You probably don't want this.",
+                   type: :boolean, default: false
+  option :using_sdk, desc: 'Assume we are using the SDK and automatically ' +
+                     'determine SDK version. Ignored unless using --set-sdk).',
+                     type: :boolean, default: true
+  option :module, desc: 'Which module to test and/or submit, if applicable.',
+                  type: :string, default: 'all', aliases: '-m'                  
   option :diff, type: :boolean, default: false, desc: 'Assume checksums are ' + 
                 'up to date and perform diff'
   # option :force, type: :boolean, aliases: '-f'
@@ -231,6 +244,18 @@ class MesaTest < Thor
   # LONGDESC
   # option :force, type: :boolean, aliases: '-f'
   # option :module, type: :string, aliases: '-m', default: 'all'
+  option :force, desc: 'When submitting, assume submission data in ' +
+                       '~/.mesa_test.yml are correct rather than checking ' +
+                       'with user.', type: :boolean, default: false,
+                       aliases: '-f'
+  option :module, desc: 'Which module to test and/or submit, if applicable.',
+                  type: :string, default: 'all', aliases: '-m'
+  option :set_sdk, desc: 'Specify SDK/no SDK. Should pair with --using-sdk ' +
+                   "or --no-using-sdk. You probably don't want this.",
+                   type: :boolean, default: false
+  option :using_sdk, desc: 'Assume we are using the SDK and automatically ' +
+                     'determine SDK version. Ignored unless using --set-sdk).',
+                     type: :boolean, default: true
   def submit_one(mesa_dir, test_case_name)
     s = create_and_check_submitter(force: options[:force])
     m = create_and_check_mesa(mesa_dir: mesa_dir,
@@ -302,7 +327,21 @@ class MesaTest < Thor
   # LONGDESC
   # option :force, type: :boolean, aliases: '-f'
   # option :module, type: :string, aliases: '-m', default: 'all'
-  # option :svn, type: :boolean, default: true  
+  # option :svn, type: :boolean, default: true 
+  option :force, desc: 'When submitting, assume submission data in ' +
+                       '~/.mesa_test.yml are correct rather than checking ' +
+                       'with user.', type: :boolean, default: false,
+                       aliases: '-f'
+  option :module, desc: 'Which module to test and/or submit, if applicable.',
+                  type: :string, default: 'all', aliases: '-m'                       
+  option :svn, desc: 'Use svn to gather log/version data if needed.',
+               type: :boolean, default: true
+  option :set_sdk, desc: 'Specify SDK/no SDK. Should pair with --using-sdk ' +
+                   "or --no-using-sdk. You probably don't want this.",
+                   type: :boolean, default: false
+  option :using_sdk, desc: 'Assume we are using the SDK and automatically ' +
+                     'determine SDK version. Ignored unless using --set-sdk).',
+                     type: :boolean, default: true
   def submit_revision(mesa_dir)
     s = create_and_check_submitter(force: options[:force])
     m = create_and_check_mesa(mesa_dir: mesa_dir,
@@ -464,6 +503,22 @@ class MesaTest < Thor
   # svn. By default, this is on. To shut off, use --no-svn. If off, no author or
   # commit message are submitted.  
   # LONGDESC
+  option :force, desc: 'When submitting, assume submission data in ' +
+                       '~/.mesa_test.yml are correct rather than checking ' +
+                       'with user.', type: :boolean, default: false,
+                       aliases: '-f'
+  option :submit, desc: 'Submit results (if any) to MesaTestHub.',
+                  type: :boolean, default: true
+  option :svn, desc: 'Use svn to gather log/version data if needed.',
+               type: :boolean, default: true
+  option :module, desc: 'Which module to test and/or submit, if applicable.',
+                  type: :string, default: 'all', aliases: '-m'
+  option :set_sdk, desc: 'Specify SDK/no SDK. Should pair with --using-sdk ' +
+                   "or --no-using-sdk. You probably don't want this.",
+                   type: :boolean, default: false
+  option :using_sdk, desc: 'Assume we are using the SDK and automatically ' +
+                     'determine SDK version. Ignored unless using --set-sdk).',
+                     type: :boolean, default: true
   option :diff, type: :boolean, default: false, desc: 'Assume checksums are ' + 
                 'up to date and perform diff'
   option :destroy, type: :boolean, desc: 'Delete mesa installation upon ' \

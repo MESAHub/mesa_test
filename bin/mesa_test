@@ -46,10 +46,11 @@ class MesaTest < Thor
                   type: :boolean, default: true
   option :diff, type: :boolean, default: false, desc: 'Assume checksums are ' + 
                 'up to date and perform diff', aliases: '-d'
-  option :svn, desc: 'Use svn to gather log/version data.',
+  option :svn, desc: 'Use svn to gather log/version data. Safe to use when ' +
+               'also using --no-submit; else may give bad version numbers.',
                type: :boolean, default: true
-  option :set_sdk, desc: 'Specify SDK/no SDK. Should pair with --using-sdk ' +
-                   "or --no-using-sdk. You probably don't want this.",
+  option :set_sdk, desc: 'Override user- and test-generated data to deterine' +
+                   ' if the SDK is used and instead use value of --using_sdk.',
                    type: :boolean, default: false
   option :using_sdk, desc: 'Assume we are using the SDK and automatically ' +
                      'determine SDK version. Ignored unless using --set-sdk).',
@@ -99,10 +100,11 @@ class MesaTest < Thor
                   type: :boolean, default: true
   option :diff, type: :boolean, default: false, desc: 'Assume checksums are ' + 
                 'up to date and perform diff', aliases: '-d'
-  option :svn, desc: 'Use svn to gather log/version data.',
+  option :svn, desc: 'Use svn to gather log/version data. Safe to use when ' +
+               'also using --no-submit; else may give bad version numbers.',
                type: :boolean, default: true
-  option :set_sdk, desc: 'Specify SDK/no SDK. Should pair with --using-sdk ' +
-                   "or --no-using-sdk. You probably don't want this.",
+  option :set_sdk, desc: 'Override user- and test-generated data to deterine' +
+                   ' if the SDK is used and instead use value of --using_sdk.',
                    type: :boolean, default: false
   option :using_sdk, desc: 'Assume we are using the SDK and automatically ' +
                      'determine SDK version. Ignored unless using --set-sdk).',
@@ -140,10 +142,10 @@ class MesaTest < Thor
                        '~/.mesa_test.yml are correct rather than checking ' +
                        'with user.', type: :boolean, default: false,
                        aliases: '-f'
-  option :svn, desc: 'Use svn to gather log/version data.',
-               type: :boolean, default: true
-  option :set_sdk, desc: 'Specify SDK/no SDK. Should pair with --using-sdk ' +
-                   "or --no-using-sdk. You probably don't want this.",
+  option :svn, desc: 'Use svn to gather log/version data. NECESSARY TO GET ' +
+               'ACCURATE VERSION NUMBER.', type: :boolean, default: true
+  option :set_sdk, desc: 'Override user- and test-generated data to deterine' +
+                   ' if the SDK is used and instead use value of --using_sdk.',
                    type: :boolean, default: false
   option :using_sdk, desc: 'Assume we are using the SDK and automatically ' +
                      'determine SDK version. Ignored unless using --set-sdk).',
@@ -183,9 +185,9 @@ class MesaTest < Thor
                   type: :string, default: 'all', aliases: '-m'                       
   option :svn, desc: 'Use svn to gather log/version data. NECESSARY TO GET ' +
                'ACCURATE VERSION NUMBER.', type: :boolean, default: true
-  option :set_sdk, desc: 'Whether or not to specify SDK/no SDK. Should pair ' +
-                   'with --using-sdk or --no-using-sdk. You probably ' +
-                   "don't want this.", type: :boolean, default: false
+  option :set_sdk, desc: 'Override user- and test-generated data to deterine' +
+                   ' if the SDK is used and instead use value of --using_sdk.',
+                   type: :boolean, default: false
   option :using_sdk, desc: 'Assume we are using the SDK and automatically ' +
                      'determine SDK version. Ignored unless using --set-sdk).',
                      type: :boolean, default: true
@@ -257,11 +259,12 @@ class MesaTest < Thor
                   type: :boolean, default: true
   option :diff, type: :boolean, default: false, desc: 'Assume checksums are ' + 
                 'up to date and perform diff', aliases: '-d'
-  option :svn, desc: 'Use svn to gather log/version data if needed.',
+  option :svn, desc: 'Use svn to gather log/version data. Safe to use when ' +
+               'also using --no-submit; else may give bad version numbers.',
                type: :boolean, default: true
-  option :set_sdk, desc: 'Whether or not to specify SDK/no SDK. Should pair ' +
-                   'with --using-sdk or --no-using-sdk. You probably ' +
-                   "don't want this.", type: :boolean, default: false
+  option :set_sdk, desc: 'Override user- and test-generated data to deterine' +
+                   ' if the SDK is used and instead use value of --using_sdk.',
+                   type: :boolean, default: false
   option :using_sdk, desc: 'Assume we are using the SDK and automatically ' +
                      'determine SDK version. Ignored unless using --set-sdk).',
                      type: :boolean, default: true

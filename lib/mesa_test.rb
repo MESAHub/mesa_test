@@ -297,8 +297,8 @@ e-mail and password will be stored in plain text.'
             test_instance: {
               runtime_seconds: test_case.runtime_seconds,
               passed: test_case.passed?,
-              compiler: compiler,
-              compiler_version: compiler_version,
+              compiler: test_case.compiler || compiler,
+              compiler_version: test_case.compiler_version || compiler_version,
               platform_version: platform_version,
               omp_num_threads: test_case.test_omp_num_threads,
               success_type: test_case.success_type,
@@ -524,7 +524,7 @@ class Mesa
     nil
   end
 
-  def initialize(mesa_dir: ENV['MESA_DIR'], use_svn: true, using_sdk: false)
+  def initialize(mesa_dir: ENV['MESA_DIR'], use_svn: true, using_sdk: true)
     # absolute_path ensures that it doesn't matter where commands are executed
     # from
     @mesa_dir = File.absolute_path(mesa_dir)

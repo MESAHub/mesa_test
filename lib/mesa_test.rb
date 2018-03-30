@@ -1284,7 +1284,7 @@ class MesaTestCase
 
     # check that photo file actually exists
     unless File.exist?(File.join('photos', photo)) ||
-           File.exist?(File.join('photos1', photo))
+           File.exist?(File.join('photos', "b_#{photo}"))
       return fail_test(:photo_file)
     end
 

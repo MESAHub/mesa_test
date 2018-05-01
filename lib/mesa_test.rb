@@ -464,8 +464,7 @@ class Mesa
   def self.download(version_number: nil, new_mesa_dir: nil, use_svn: true)
     new_mesa_dir ||= File.join(ENV['HOME'], 'mesa-test-r' + version_number.to_s)
     success = bash_execute(
-      "svn co -r #{version_number} " \
-      "svn://svn.code.sf.net/p/mesa/code/trunk #{new_mesa_dir}"
+      "svn co -r #{version_number} #{SVN_URI} #{new_mesa_dir}"
     )
     unless success
       raise MesaDirError, 'Encountered a problem in download mesa ' \

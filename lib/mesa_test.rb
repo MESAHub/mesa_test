@@ -923,9 +923,9 @@ class MesaTestCase
     @retries = 0
     @backups = 0
     @steps = 0
-    # 2 (default) means uknown. Updated by running or loading data. 
+    # 2 (default) means uknown. Updated by running or loading data.
     # 1 means did diffs (not update_checksums; like each_test_run_and_diff)
-    # 0 means no diffs (update_checksums; like each_test_run)    
+    # 0 means no diffs (update_checksums; like each_test_run)
     @diff = 2
 
     # note: this gets overridden for new runs, so this is probably irrelevant
@@ -943,6 +943,8 @@ class MesaTestCase
     @mod = mod
     @failure_msg = {
       run_test_string: "#{test_name} run failed: does not match test string",
+      final_model: "#{test_name} run failed: final model #{final_model} not " \
+        'made.',
       run_checksum: "#{test_name} run failed: checksum for #{final_model} " \
         'does not match after ./rn',
       run_diff: "#{test_name} run failed: diff #{final_model} " \
@@ -1260,6 +1262,9 @@ class MesaTestCase
 
     # display runtime message
     puts IO.readlines('out.txt').select { |line| line.scan(/runtime/i) }[-1]
+
+    # there's supposed to be a final model; check that it exists first
+    fail_test(:final_model) unless File.exist?(final_model)
 
     # update checksums
     #

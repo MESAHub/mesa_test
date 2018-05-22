@@ -1264,7 +1264,7 @@ class MesaTestCase
     puts IO.readlines('out.txt').select { |line| line.scan(/runtime/i) }[-1]
 
     # there's supposed to be a final model; check that it exists first
-    fail_test(:final_model) unless File.exist?(final_model)
+    return fail_test(:final_model) unless File.exist?(final_model)
 
     # update checksums
     #

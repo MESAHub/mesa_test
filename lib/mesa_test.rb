@@ -457,7 +457,7 @@ e-mail and password will be stored in plain text.'
 end
 
 class Mesa
-  SVN_URI = 'svn://svn.code.sf.net/p/mesa/code/trunk'.freeze    
+  SVN_URI = 'https://subversion.assembla.com/svn/mesa\^mesa/trunk'.freeze    
 
   attr_reader :mesa_dir, :test_data, :test_names, :test_cases, :shell,
               :svn_version, :svn_author, :svn_log, :using_sdk

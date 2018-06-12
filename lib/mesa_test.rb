@@ -466,13 +466,14 @@ class Mesa
   def self.download(version_number: nil, new_mesa_dir: nil, use_svn: true,
     using_sdk: true)
     new_mesa_dir ||= File.join(ENV['HOME'], 'mesa-test-r' + version_number.to_s)
-    success = bash_execute(
-      "svn co -r #{version_number} #{SVN_URI} #{new_mesa_dir}"
-    )
+    svn_command = "svn co -r #{version_number} #{SVN_URI} #{new_mesa_dir}"
+    success = bash_execute(svn_command)
     unless success
       raise MesaDirError, 'Encountered a problem in downloading mesa ' \
                           "revision #{version_number}. Perhaps svn isn't " \
-                          'working properly?'
+                          'working properly?' + "\n\n"\
+                          'Tried the following command: ' + svn_command
+
     end
     Mesa.new(mesa_dir: new_mesa_dir, use_svn: use_svn, using_sdk: using_sdk)
   end

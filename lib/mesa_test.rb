@@ -252,6 +252,7 @@ e-mail and password will be stored in plain text.'
       steps: test_case.steps,
       retries: test_case.retries,
       backups: test_case.backups,
+      diff: test_case.diff,
       summary_text: test_case.summary_text
     }
 
@@ -306,6 +307,7 @@ e-mail and password will be stored in plain text.'
               steps: test_case.steps,
               retries: test_case.retries,
               backups: test_case.backups,
+              diff: test_case.diff,
               summary_text: test_case.summary_text
             },
             extra: { test_case: test_name, mod: mod }
@@ -895,7 +897,7 @@ class MesaTestCase
               :failure_msg, :success_msg, :photo, :runtime_seconds,
               :test_omp_num_threads, :mesa_version, :shell, :mod, :retries,
               :backups, :steps, :runtime_minutes, :summary_text, :compiler,
-              :compiler_version
+              :compiler_version, :diff
   attr_accessor :data_names, :data_types, :failure_type, :success_type,
                 :outcome
 
@@ -921,7 +923,13 @@ class MesaTestCase
     @retries = 0
     @backups = 0
     @steps = 0
-    @summary_text = ''
+    # 2 (default) means uknown. Updated by running or loading data.
+    # 1 means did diffs (not update_checksums; like each_test_run_and_diff)
+    # 0 means no diffs (update_checksums; like each_test_run)
+    @diff = 2
+
+    # note: this gets overridden for new runs, so this is probably irrelevant
+    @summary_text = nil
 
     # this overrides the submitters choice if it is non-nil
     @compiler = mesa.using_sdk ? 'SDK' : nil
@@ -935,6 +943,8 @@ class MesaTestCase
     @mod = mod
     @failure_msg = {
       run_test_string: "#{test_name} run failed: does not match test string",
+      final_model: "#{test_name} run failed: final model #{final_model} not " \
+        'made.',
       run_checksum: "#{test_name} run failed: checksum for #{final_model} " \
         'does not match after ./rn',
       run_diff: "#{test_name} run failed: diff #{final_model} " \
@@ -1079,6 +1089,7 @@ class MesaTestCase
       'retries' => retries,
       'backups' => backups,
       'steps' => steps,
+      'diff' => diff,
       'summary_text' => summary_text
     }
     if compiler == 'SDK'
@@ -1110,8 +1121,10 @@ class MesaTestCase
     @retries = data['retries'] || @retries
     @backups = data['backups'] || @backups
     @steps = data['steps'] || @steps
+    @diff = data['diff'] || @diff
     @summary_text = data['summary_text'] || @summary_text
     @compiler = data['compiler'] || @compiler
+
     @compiler_version = data['compiler_version'] || @compiler_version
 
     # convert select data to symbols since that is how they are used
@@ -1250,6 +1263,9 @@ class MesaTestCase
     # display runtime message
     puts IO.readlines('out.txt').select { |line| line.scan(/runtime/i) }[-1]
 
+    # there's supposed to be a final model; check that it exists first
+    return fail_test(:final_model) unless File.exist?(final_model)
+
     # update checksums
     #
     # if this is true, behave like each_test_run.  update the checksum
@@ -1258,6 +1274,7 @@ class MesaTestCase
     # if this is false, behave like each_test_run_and_diff.  assume
     # the checksum is up-to-date and check it matches after rn and re.
     if @mesa.update_checksums
+      @diff = 0  # this means no diffs run
       puts "md5sum \"#{final_model}\" > checks.md5"
       bash_execute("md5sum \"#{final_model}\" > checks.md5")
       FileUtils.cp final_model, 'final_check.mod'
@@ -1269,6 +1286,7 @@ class MesaTestCase
     end
 
     # check that final model matches
+    @diff = 1  # this means diffs were run
     puts './ck >& final_check_diff.txt'
     return fail_test(:run_checksum) unless
       bash_execute('./ck >& final_check_diff.txt')
@@ -1284,7 +1302,8 @@ class MesaTestCase
 
     # check that photo file actually exists
     unless File.exist?(File.join('photos', photo)) ||
-           File.exist?(File.join('photos1', photo))
+           File.exist?(File.join('photos1', photo)) ||
+           File.exist?(File.join('photos', "b_#{photo}"))
       return fail_test(:photo_file)
     end
 
@@ -1408,6 +1427,17 @@ class MesaTestCase
   end
 
   def get_summary_text
+    # original plan was to include diff data in summary text... now it's just
+    # part of the test_instance object and is submitted as an integer
+    # res = case diff
+    #       when 0
+    #         "No Diff\n"
+    #       when 1
+    #         "Diff\n"
+    #       else
+    #         "Ambiguous Diff\n"
+    #       end
+    # res +
     IO.readlines(out_file).select do |line|
       line =~ /^\s*runtime/ 
     end.join

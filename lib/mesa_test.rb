@@ -553,6 +553,31 @@ class Mesa
     @use_svn
   end
 
+  def determine_diff
+    # automatically determine if update_checksums should be true (don't do
+    # diffs or true (DO do diffs). Only works if svn data has ALREADY been
+    # loaded
+
+    # don't do anything to @update_checksums if we haven't loaded svn data
+    return unless @svn_log
+
+    # by default, DON'T do diffs
+    @update_checksums = true
+
+    # list of phrases, which, if present in the log entry, will trigger diffs
+    [
+      /updated? checksums?/i,
+      /checksums? updated?/i,
+      /ready for diffs?/i,
+    ].each { |trigger| @update_checksums = false if trigger =~ @svn_log }
+    if @update_checksums
+      shell.say "\nFrom svn log, didn't decide to tak diffs."
+    else
+      shell.say "From svn log, automatically decided to take diffs." 
+    end
+    shell.say "log entry: #{@svn_log}"
+  end
+
   def version_number
     version = @svn_version || 0
     # fall back to MESA_DIR/data's version number svn didn't work

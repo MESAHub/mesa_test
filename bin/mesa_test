@@ -351,7 +351,7 @@ class MesaTest < Thor
                             using_sdk: true, auto_diff: false)
     m = Mesa.new(mesa_dir: mesa_dir, use_svn: use_svn, using_sdk: using_sdk)
     check_mesa(m)
-    update_mesa(mesa: m, diff: diff, mod: mod, auto_diff: true)
+    update_mesa(mesa: m, diff: diff, mod: mod, auto_diff: auto_diff)
     m
   end
 

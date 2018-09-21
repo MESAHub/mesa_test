@@ -59,11 +59,15 @@ class MesaTest < Thor
                   type: :string, default: 'all', aliases: '-m'                  
   option :log, type: :boolean, default: true, desc: 'Save yml file of test ' \
                'results in test case directory.'
+  option :auto_diff, desc: 'Automatically determine if diffs should be run '\
+                     'from svn log entry. Overrides --diff or --no-diff.',
+                     type: :boolean, default: false
   def test_one(mesa_dir, test_case_name)
     s = create_and_check_submitter(force: options[:force]) if options[:submit]
     m = create_and_check_mesa(mesa_dir: mesa_dir, diff: options[:diff],
                               mod: options[:module].downcase.to_sym,
-                              use_svn: options[:svn], using_sdk: using_sdk?(s))
+                              use_svn: options[:svn], using_sdk: using_sdk?(s),
+                              auto_diff: options[:auto_diff])
     t = create_and_check_test_case(mesa: m, test_case_name: test_case_name,
                                    mod: options[:module].downcase.to_sym)
 
@@ -113,11 +117,16 @@ class MesaTest < Thor
                   type: :string, default: 'all', aliases: '-m'                  
   option :log, type: :boolean, default: true, desc: 'Save yml file of test ' \
                'results in test case directory.'
+  option :auto_diff, desc: 'Automatically determine if diffs should be run '\
+                     'from svn log entry. Overrides --diff or --no-diff.',
+                     type: :boolean, default: false
   def test_revision(mesa_dir)
     s = create_and_check_submitter(force: options[:force]) if options[:submit]
     m = create_and_check_mesa(mesa_dir: mesa_dir, diff: options[:diff],
                               mod: options[:module].downcase.to_sym,
-                              use_svn: options[:svn], using_sdk: using_sdk?(s))
+                              use_svn: options[:svn],
+                              using_sdk: using_sdk?(s),
+                              auto_diff: options[:auto_diff])
 
     # run all tests
     m.each_test_run_and_diff(log_results: options[:log],
@@ -274,8 +283,11 @@ class MesaTest < Thor
                    'submission of complete results.', default: false
   option :log, type: :boolean, default: true, desc: 'Save yml file of test ' \
                'results in test case directory.'
+  option :auto_diff, desc: 'Automatically determine if diffs should be run '\
+                     'from svn log entry. Overrides --diff or --no-diff.',
+                     type: :boolean, default: false
   def install_and_test_revision(version, mesa_dir)
-    s = nil  # to make sure using_sdk? below will work properly
+    s = nil # to make sure using_sdk? below will work properly
     s = create_and_check_submitter(force: options[:force]) if options[:submit]
     mesa_version, diff = filter_version_and_diff(version, s)
     if mesa_version.nil?
@@ -292,7 +304,8 @@ class MesaTest < Thor
       shell.say "\nFailed in compiling MESA r-#{m.version_number}.", :red
     else
       check_mesa(m)
-      update_mesa(mesa: m, diff: diff, mod: options[:module].downcase.to_sym)
+      update_mesa(mesa: m, diff: diff, mod: options[:module].downcase.to_sym,
+                  auto_diff: options[:auto_diff])
 
       # run all tests. Don't be fooled, whether or not a diff happens is set
       # by the diff attribute of the mesa object, set above.
@@ -335,10 +348,10 @@ class MesaTest < Thor
   end
 
   def create_and_check_mesa(mesa_dir:, use_svn: true, diff: true, mod: :all,
-                            using_sdk: true)
+                            using_sdk: true, auto_diff: false)
     m = Mesa.new(mesa_dir: mesa_dir, use_svn: use_svn, using_sdk: using_sdk)
     check_mesa(m)
-    update_mesa(mesa: m, diff: diff, mod: mod)
+    update_mesa(mesa: m, diff: diff, mod: mod, auto_diff: auto_diff)
     m
   end
 
@@ -349,10 +362,12 @@ class MesaTest < Thor
     end
   end
 
-  def update_mesa(mesa:, diff: true, mod: :all)
+  def update_mesa(mesa:, diff: true, mod: :all, auto_diff: false)
     mesa.load_test_source_data(mod: mod)
-    # choose whether to update checksums
-    mesa.update_checksums = !diff
+    # choose whether to update checksums.
+    mesa.update_checksums = !diff unless diff.nil?
+    # automatically figure out diff situation. Overrides choice from diff!
+    mesa.determine_diff if auto_diff
   end
 
   def create_and_check_test_case(mesa:, test_case_name:, mod: :all)

@@ -266,7 +266,9 @@ e-mail and password will be stored in plain text.'
   end
 
   def revision_submit_params(mesa)
-    mesa.load_svn_data if mesa.use_svn?      
+    # only query svn if we didn't do it in the first place. Probably
+    # unnecessary
+    mesa.load_svn_data if mesa.use_svn? && mesa.svn_version.nil?     
     # version gives data about version
     # user gives data about the user and computer submitting information
     # instances is array of hashes that identify test instances (more below)
@@ -553,6 +555,31 @@ class Mesa
     @use_svn
   end
 
+  def determine_diff
+    # automatically determine if update_checksums should be true (don't do
+    # diffs or true (DO do diffs). Only works if svn data has ALREADY been
+    # loaded
+
+    # don't do anything to @update_checksums if we haven't loaded svn data
+    return unless @svn_log
+
+    # by default, DON'T do diffs
+    @update_checksums = true
+
+    # list of phrases, which, if present in the log entry, will trigger diffs
+    [
+      /updated? checksums?/i,
+      /checksums? updated?/i,
+      /ready for diffs?/i,
+    ].each { |trigger| @update_checksums = false if trigger =~ @svn_log }
+    if @update_checksums
+      shell.say "\nFrom svn log, didn't decide to tak diffs."
+    else
+      shell.say "From svn log, automatically decided to take diffs." 
+    end
+    shell.say "log entry: #{@svn_log}"
+  end
+
   def version_number
     version = @svn_version || 0
     # fall back to MESA_DIR/data's version number svn didn't work
@@ -578,7 +605,11 @@ class Mesa
   def svn_version_number
     # match output of svn info to a line with the revision, capturing the
     # number, and defaulting to 0 if none is found.
-    return (/Revision\:\s+(\d+)/.match(`svn info #{mesa_dir}`)[1] || 0).to_i
+    matches = /Revision\:\s+(\d+)/.match(`svn info #{mesa_dir}`)
+    unless matches.nil?
+      return matches[1].to_i
+    end
+    return 0
   rescue Errno::ENOENT
     return 0
   end

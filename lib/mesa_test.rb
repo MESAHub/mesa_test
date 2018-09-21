@@ -266,7 +266,9 @@ e-mail and password will be stored in plain text.'
   end
 
   def revision_submit_params(mesa)
-    mesa.load_svn_data if mesa.use_svn?      
+    # only query svn if we didn't do it in the first place. Probably
+    # unnecessary
+    mesa.load_svn_data if mesa.use_svn? && mesa.svn_version.nil?     
     # version gives data about version
     # user gives data about the user and computer submitting information
     # instances is array of hashes that identify test instances (more below)
@@ -603,7 +605,11 @@ class Mesa
   def svn_version_number
     # match output of svn info to a line with the revision, capturing the
     # number, and defaulting to 0 if none is found.
-    return (/Revision\:\s+(\d+)/.match(`svn info #{mesa_dir}`)[1] || 0).to_i
+    matches = /Revision\:\s+(\d+)/.match(`svn info #{mesa_dir}`)
+    unless matches.nil?
+      return matches[1].to_i
+    end
+    return 0
   rescue Errno::ENOENT
     return 0
   end

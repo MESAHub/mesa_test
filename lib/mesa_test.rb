@@ -253,6 +253,7 @@ e-mail and password will be stored in plain text.'
       retries: test_case.retries,
       backups: test_case.backups,
       diff: test_case.diff,
+      checksum: test_case.checksum,
       summary_text: test_case.summary_text
     }
 
@@ -310,6 +311,7 @@ e-mail and password will be stored in plain text.'
               retries: test_case.retries,
               backups: test_case.backups,
               diff: test_case.diff,
+              checksum: test_case.checksum,
               summary_text: test_case.summary_text
             },
             extra: { test_case: test_name, mod: mod }
@@ -928,7 +930,7 @@ class MesaTestCase
               :failure_msg, :success_msg, :photo, :runtime_seconds,
               :test_omp_num_threads, :mesa_version, :shell, :mod, :retries,
               :backups, :steps, :runtime_minutes, :summary_text, :compiler,
-              :compiler_version, :diff
+              :compiler_version, :diff, :checksum
   attr_accessor :data_names, :data_types, :failure_type, :success_type,
                 :outcome
 
@@ -958,6 +960,9 @@ class MesaTestCase
     # 1 means did diffs (not update_checksums; like each_test_run_and_diff)
     # 0 means no diffs (update_checksums; like each_test_run)
     @diff = 2
+    # start with nil. Should only be updated to a non-nil value if test is
+    # completely successful
+    @checksum = nil
 
     # note: this gets overridden for new runs, so this is probably irrelevant
     @summary_text = nil
@@ -1121,6 +1126,7 @@ class MesaTestCase
       'backups' => backups,
       'steps' => steps,
       'diff' => diff,
+      'checksum' => checksum,
       'summary_text' => summary_text
     }
     if compiler == 'SDK'
@@ -1153,6 +1159,7 @@ class MesaTestCase
     @backups = data['backups'] || @backups
     @steps = data['steps'] || @steps
     @diff = data['diff'] || @diff
+    @checksum = data['checksum'] || @checksum
     @summary_text = data['summary_text'] || @summary_text
     @compiler = data['compiler'] || @compiler
 
@@ -1261,6 +1268,11 @@ class MesaTestCase
   def succeed(success_type)
     @success_type = success_type
     @outcome = :pass
+    # this should ONLY be read after we are certain we've passed AND that we
+    # even have a newly-made checksum
+    if File.exist?('checks.md5') && @mesa.update_checksums
+      @checksum = File.read('checks.md5').split.first
+    end
     write_success_msg(success_type)
     true
   end

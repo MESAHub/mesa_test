@@ -241,6 +241,8 @@ e-mail and password will be stored in plain text.'
       email: email,
       password: password,
       runtime_seconds: test_case.runtime_seconds,
+      re_time: test_case.re_time,
+      total_runtime_seconds: test_case.total_runtime_seconds,
       mesa_version: test_case.mesa_version,
       passed: test_case.passed? ? 1 : 0,
       compiler: test_case.compiler || compiler,
@@ -254,6 +256,8 @@ e-mail and password will be stored in plain text.'
       backups: test_case.backups,
       diff: test_case.diff,
       checksum: test_case.checksum,
+      rn_mem: test_case.rn_mem,
+      re_mem: test_case.re_mem,
       summary_text: test_case.summary_text
     }
 
@@ -300,6 +304,8 @@ e-mail and password will be stored in plain text.'
           res[:instances] << {
             test_instance: {
               runtime_seconds: test_case.runtime_seconds,
+              re_time: test_case.re_time,
+              total_runtime_seconds: test_case.total_runtime_seconds,
               passed: test_case.passed?,
               compiler: test_case.compiler || compiler,
               compiler_version: test_case.compiler_version || compiler_version,
@@ -312,6 +318,8 @@ e-mail and password will be stored in plain text.'
               backups: test_case.backups,
               diff: test_case.diff,
               checksum: test_case.checksum,
+              rn_mem: test_case.rn_mem,
+              re_mem: test_case.re_mem,
               summary_text: test_case.summary_text
             },
             extra: { test_case: test_name, mod: mod }
@@ -930,7 +938,8 @@ class MesaTestCase
               :failure_msg, :success_msg, :photo, :runtime_seconds,
               :test_omp_num_threads, :mesa_version, :shell, :mod, :retries,
               :backups, :steps, :runtime_minutes, :summary_text, :compiler,
-              :compiler_version, :diff, :checksum
+              :compiler_version, :diff, :checksum, :rn_mem, :re_mem,
+              :re_time, :total_runtime_seconds
   attr_accessor :data_names, :data_types, :failure_type, :success_type,
                 :outcome
 
@@ -953,6 +962,7 @@ class MesaTestCase
     @runtime_seconds = 0
     @test_omp_num_threads = 1
     @runtime_minutes = 0
+    @total_runtime_seconds = 0
     @retries = 0
     @backups = 0
     @steps = 0
@@ -963,6 +973,12 @@ class MesaTestCase
     # start with nil. Should only be updated to a non-nil value if test is
     # completely successful
     @checksum = nil
+    @re_time = nil # rn_time is in the form of @runtime_seconds
+
+    # these only get used with modern versions of both the sdk and the test
+    # suite
+    @rn_mem = nil
+    @re_mem = nil
 
     # note: this gets overridden for new runs, so this is probably irrelevant
     @summary_text = nil
@@ -1047,8 +1063,8 @@ class MesaTestCase
 
   # based on $MESA_DIR/star/test_suite/each_test_clean, revision 10000
   def clean
-    shell.say("cleaning #{test_name}", color = :blue)
-    puts ''
+    shell.say("Cleaning #{test_name}", color = :yellow)
+    # puts ''
     check_mesa_dir
     check_test_case
     in_dir do
@@ -1058,7 +1074,7 @@ class MesaTestCase
         "in #{Dir.getwd}."
       end
       shell.say 'Removing all files from LOGS, LOGS1, LOGS2, photos, ' \
-        'photos1, and photos2', color = :blue
+        'photos1, and photos2 as well as old test results', color = :blue
       FileUtils.rm_f Dir.glob('LOGS/*')
       FileUtils.rm_f Dir.glob('LOGS1/*')
       FileUtils.rm_f Dir.glob('LOGS2/*')
@@ -1066,11 +1082,12 @@ class MesaTestCase
       FileUtils.rm_f Dir.glob('photos1/*')
       FileUtils.rm_f Dir.glob('photos2/*')
 
-      shell.say 'Removing files binary_history.data, out.txt, and ' \
-        'test_results.yml', color = :blue
+      shell.say 'Removing files binary_history.data, out.txt, ' \
+        'test_results.yml, and memory usage files', color = :blue
       FileUtils.rm_f 'binary_history.data'
       FileUtils.rm_f 'out.txt'
       FileUtils.rm_f 'test_results.yml'
+      FileUtils.rm_f Dir.glob('mem-*.txt')
       if File.directory? File.join('star_history', 'history_out')
         shell.say 'Removing all files of the form history_out* from ' \
           'star_history', :blue
@@ -1088,23 +1105,40 @@ class MesaTestCase
 
   # based on $MESA_DIR/star/test_suite/each_test_run_and_diff, revision 10000
   def do_one
+    shell.say("Testing #{test_name}", :yellow)
+    # puts ''
+    test_start = Time.now
     @test_omp_num_threads = omp_num_threads
     if mesa.using_sdk
-      version_bin = File.join(ENV['MESASDK_ROOT'], 'bin', 'mesasdk_version.sh')
+      version_bin = File.join(ENV['MESASDK_ROOT'], 'bin', 'mesasdk_version')
       # can't use bash_execute because the return value of bash_execute is the
       # exit status of the commmand (true or false), whereas backticks give the
       # output (the version string) as the output
-      @compiler_version = `bash -c #{version_bin}`.strip
+      if File.exist? version_bin
+        # newer SDKs have a simple executable
+        @compiler_version = `#{version_bin}`.strip
+      else
+        # older way, call bash on it (file is mesasdk_version.sh)
+        @compiler_version = `bash -c #{version_bin + '.sh'}`.strip
+      end
+
       shell.say("Using version #{@compiler_version} of the SDK.", :blue)
     end
     in_dir do
       FileUtils.touch '.running'
-      shell.say("building and running #{test_name}", :blue)
-      puts ''
       build_and_run
+      # report memory usage if it is available
+      if File.exist?('mem-rn.txt')
+        @rn_mem = File.read('mem-rn.txt').strip.to_i
+      end
+      if File.exist?('mem-re.txt')
+        @re_mem = File.read('mem-re.txt').strip.to_i
+      end
       FileUtils.rm '.running'
       puts ''
     end
+    test_finish = Time.now
+    @total_runtime_seconds = (test_finish - test_start).to_i
   end
 
   def log_results
@@ -1116,6 +1150,8 @@ class MesaTestCase
       'test_case' => test_name,
       'module' => mod,
       'runtime_seconds' => runtime_seconds,
+      're_time' => re_time,
+      'total_runtime_seconds' => total_runtime_seconds,
       'mesa_version' => mesa_version,
       'outcome' => outcome,
       'omp_num_threads' => test_omp_num_threads,
@@ -1127,6 +1163,8 @@ class MesaTestCase
       'steps' => steps,
       'diff' => diff,
       'checksum' => checksum,
+      'rn_mem' => rn_mem,
+      're_mem' => re_mem,
       'summary_text' => summary_text
     }
     if compiler == 'SDK'
@@ -1148,6 +1186,8 @@ class MesaTestCase
     end
     data = YAML.safe_load(File.read(load_file), [Symbol])
     @runtime_seconds = data['runtime_seconds'] || @runtime_seconds
+    @re_time = data['re_time'] || @re_time
+    @total_runtime_seconds = data['total_runtime_seconds'] || @total_runtime_seconds
     @mod = data['module'] || @mod
     @mesa_version = data['mesa_version'] || @mesa_version
     @outcome = data['outcome'] || @outcome
@@ -1160,6 +1200,8 @@ class MesaTestCase
     @steps = data['steps'] || @steps
     @diff = data['diff'] || @diff
     @checksum = data['checksum'] || @checksum
+    @rn_mem = data['rn_mem'] || @rn_mem
+    @re_mem = data['re_mem'] || @re_mem
     @summary_text = data['summary_text'] || @summary_text
     @compiler = data['compiler'] || @compiler
 
@@ -1208,6 +1250,10 @@ class MesaTestCase
 
   def data_types
     %i[float integer string boolean]
+  end
+
+  def rn_time
+    runtime_seconds
   end
 
   # cd into the test case directory, do something in a block, then cd back
@@ -1282,12 +1328,19 @@ class MesaTestCase
     run_start = Time.now
 
     # do the run
-    puts './rn >> out.txt 2> err.txt'
-    bash_execute('./rn >> out.txt 2> err.txt')
+    rn_command = if File.exist?(File.join(ENV['MESASDK_ROOT'], 'bin', 'time'))
+                   %q(command time -f '%M' -o mem-rn.txt ./rn > out.txt 2> ) +
+                     'err.txt'
+                 else
+                   './rn >> out.txt 2> err.txt'
+                 end
+    puts rn_command
+    bash_execute(rn_command)
 
     # report runtime and clean up
     run_finish = Time.now
     @runtime_seconds = (run_finish - run_start).to_i
+    @rn_time = (run_finish - run_start).to_i
     shell.say("Finished with ./rn; runtime = #{@runtime_seconds} seconds.",
               :blue)
     append_and_rm_err
@@ -1353,9 +1406,23 @@ class MesaTestCase
     # remove final model since it will be remade by restart
     FileUtils.rm_f final_model
 
-    # do restart and consolidate output
-    puts "./re #{photo} >> out.txt 2> err.txt"
-    bash_execute("./re #{photo} >> out.txt 2> err.txt")
+    # do restart and consolidate output. Command depends on if we have access
+    # to SDK version of gnu time.
+    re_command = if File.exist?(File.join(ENV['MESASDK_ROOT'], 'bin', 'time'))
+                   %q(command time -f '%M' -o mem-re.txt ./re ) + "#{photo}" \
+                     ' >> out.txt 2> err.txt'
+                 else
+                   "./re #{photo} >> out.txt 2> err.txt"
+                 end
+
+    puts re_command
+    # puts "./re #{photo} >> out.txt 2> err.txt"
+    re_start = Time.now
+    # bash_execute("./re #{photo} >> out.txt 2> err.txt")
+    # bash_execute(%Q{command time -f '%M' -o mem-re.txt ./re #{photo} >> out.txt 2> err.txt})
+    bash_execute(re_command)
+    re_finish = Time.now
+    @re_time = (re_finish - re_start).to_i
     append_and_rm_err
 
     # check that final model matches
@@ -1534,7 +1601,8 @@ def visit_dir(new_dir)
   Dir.chdir(new_dir)
   yield if block_given?
   shell.say "Leaving  #{new_dir}\n", :blue
-  shell.say "Entering #{cwd}.", :blue
+  shell.say "Re-entering #{cwd}.", :blue
+  puts ""
   Dir.chdir(cwd)
 end
 

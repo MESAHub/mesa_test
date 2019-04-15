@@ -1271,7 +1271,14 @@ class MesaTestCase
     # this should ONLY be read after we are certain we've passed AND that we
     # even have a newly-made checksum
     if File.exist?('checks.md5') && @mesa.update_checksums
-      @checksum = File.read('checks.md5').split.first
+      # sometimes we want to ignore the final checksum value
+      # we still want to check that restarts on individual machines are bit-for-bit
+      # but we don't require bit-for-bit globally, so we report a bogus checksum
+      if File.exist?('.ignore_checksum') then
+        @checksum ='00000000000000000000000000000000'
+      else
+        @checksum = File.read('checks.md5').split.first
+      end
     end
     write_success_msg(success_type)
     true

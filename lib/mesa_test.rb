@@ -1335,7 +1335,8 @@ class MesaTestCase
     run_start = Time.now
 
     # do the run
-    rn_command = if ENV['MESASDK_ROOT'] && File.exist?(File.join(ENV['MESASDK_ROOT'], 'bin', 'time'))
+    have_time = system('which time')
+    rn_command = if have_time
                    %q(command time -f '%M' -o mem-rn.txt ./rn > out.txt 2> ) +
                      'err.txt'
                  else
@@ -1415,7 +1416,8 @@ class MesaTestCase
 
     # do restart and consolidate output. Command depends on if we have access
     # to SDK version of gnu time.
-    re_command = if ENV['MESASDK_ROOT'] && File.exist?(File.join(ENV['MESASDK_ROOT'], 'bin', 'time'))
+    have_time = system('which time')
+    re_command = if have_time
                    %q(command time -f '%M' -o mem-re.txt ./re ) + "#{photo}" \
                      ' >> out.txt 2> err.txt'
                  else

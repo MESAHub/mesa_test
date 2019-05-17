@@ -1,11 +1,12 @@
 Gem::Specification.new do |s|
   s.name = 'mesa_test'
-  s.version = '0.2.10'
+  s.version = '0.2.11'
   s.author = 'William Wolf'
-  s.date = '2019-04-17'
+  s.date = '2019-05-17'
   s.description = 'mesa_test is a command-line interface for running the ' \
     'test suites in MESA and submitting them to the companion website ' \
-    'MESATestHub.'
+    'MESATestHub. It also allows for querying the database through a command' \
+    'line interface.'
   s.summary = 'Command line tool for running and reporting the MESA test ' \
     'suites.'
   s.email = 'wmwolf@asu.edu'

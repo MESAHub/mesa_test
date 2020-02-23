@@ -12,7 +12,6 @@ MesaDirError = Class.new(StandardError)
 TestCaseDirError = Class.new(StandardError)
 InvalidDataType = Class.new(StandardError)
 
-Commit = Struct.new(:revision, :author, :datetime, :message)
 DEFAULT_REVISION = 10_000
 
 class MesaTestSubmitter
@@ -28,18 +27,14 @@ shown in parentheses at the end of a prompt. Pressing enter will accept the
 default values.
 
 To submit to MESATestHub, a valid computer name, email address, and password
-are all required. All other data are useful, but optional. Any data
+are all required. To actually run a test, you need to specify a location for
+your base MESA git repository. All other data are useful, but optional. Any data
 transferred to MESATestHub will be encrypted via HTTPS, but be warned that your
 e-mail and password will be stored in plain text.'
       # Get computer name
       response = shell.ask('What is the name of this computer (required)? ' \
         "(#{s.computer_name}):", :blue)
       s.computer_name = response unless response.empty?
-
-      # Get user name
-      response = shell.ask 'What is the name of the operator of this ' \
-        "computer? (#{s.user_name}):", :blue
-      s.user_name = response unless response.empty?
 
       # Get user e-mail
       response = shell.ask 'What is the email you can be reached ' \
@@ -51,23 +46,18 @@ e-mail and password will be stored in plain text.'
         "#{s.email} (required)? (#{s.password})", :blue
       s.password = response unless response.empty?
 
+      # Get location of source MESA repo (the mirror)
+      response = shell.ask "Where is your mirrored MESA repository located? "\
+        "#(#{s.mesa_git_location}):", :blue
+      s.mesa_git_location = response unless response.empty?
+
       # Get platform information
       response = shell.ask 'What is the platform of this computer (eg. ' \
         "macOS, Ubuntu)? (#{s.platform}):", :blue
       s.platform = response unless response.empty?
       response = shell.ask 'What is the version of the platform (eg. 10.13, ' \
-        "16.04)? (#{s.platform_version}):", :blue
+        "Ubuntu 16.04)? (#{s.platform_version}):", :blue
       s.platform_version = response unless response.empty?
-
-      # Get processor information
-      response = shell.ask 'What type of processor does this computer have ' \
-        "(eg. 3.1 GHz Intel i7)? (#{s.processor}):", :blue
-      s.processor = response unless response.empty?
-
-      # Get ram information
-      response = shell.ask 'How much RAM (in integer GB) does this computer ' \
-        "have (eg. 8)? (#{s.ram_gb}) ", :blue
-      s.ram_gb = response.to_i unless response.empty?
 
       # Get compiler information
       response = shell.ask "Which compiler are you using? (#{s.compiler}):",
@@ -78,12 +68,6 @@ e-mail and password will be stored in plain text.'
       response = shell.ask 'What version of the compiler (eg. 20170921 or ' \
         "7.2.0)? (#{s.compiler_version}): ", :blue
       s.compiler_version = response unless response.empty?
-
-      # Get earliest revision to check
-      response = shell.ask "What's the earliest revision to search back to " \
-        'when finding the latest testable revision (eg. 10000)? ' \
-        "(#{s.last_tested}): ", :blue
-      s.last_tested = response.to_i unless response.empty?
 
       # Confirm save location
       response = shell.ask "This will be saved in #{s.config_file}. Press " \
@@ -101,7 +85,7 @@ e-mail and password will be stored in plain text.'
   end
 
   def self.new_from_config(
-    config_file: File.join(ENV['HOME'], '.mesa_test.yml'), force_setup: false,
+    config_file: File.join(ENV['HOME'], '.mesa_test.', 'config.yml'), force_setup: false,
     base_uri: DEFAULT_URI
     # base_uri: 'http://localhost:3000'
   )
@@ -117,8 +101,9 @@ e-mail and password will be stored in plain text.'
   end
 
   attr_accessor :computer_name, :user_name, :email, :password, :platform,
-                :platform_version, :processor, :ram_gb, :compiler,
-                :compiler_version, :config_file, :base_uri, :last_tested
+                :mesa_git_location, :platform_version, :processor, :ram_gb,
+                :compiler, :compiler_version, :config_file, :base_uri,
+                :last_tested
 
   attr_reader :shell
 
@@ -169,14 +154,10 @@ e-mail and password will be stored in plain text.'
     puts 'Ready to submit the following data:'
     puts '-------------------------------------------------------'
     puts "Computer Name           #{computer_name}"
-    puts "User Name               #{user_name}"
     puts "User email              #{email}"
     puts 'Password                ***********'
     puts "Platform                #{platform} #{platform_version}"
-    puts "Processor               #{processor}"
-    puts "RAM                     #{ram_gb} GB"
     puts "Compiler                #{compiler} #{compiler_version}"
-    puts "Last tested revision    #{last_tested}"
     puts "Config location         #{config_file}"
     puts '-------------------------------------------------------'
     puts ''
@@ -201,16 +182,13 @@ e-mail and password will be stored in plain text.'
   def save_computer_data
     data_hash = {
       'computer_name' => computer_name,
-      'user_name' => user_name,
       'email' => email,
       'password' => password,
+      'mesa_git_location' => mesa_git_location,
       'platform' => platform,
-      'processor' => processor,
-      'ram_gb' => ram_gb,
       'platform_version' => platform_version,
       'compiler' => compiler,
-      'compiler_version' => compiler_version,
-      'last_tested' => last_tested
+      'compiler_version' => compiler_version
     }
     File.open(config_file, 'w') { |f| f.write(YAML.dump(data_hash)) }
   end
@@ -218,16 +196,13 @@ e-mail and password will be stored in plain text.'
   def load_computer_data
     data_hash = YAML.safe_load(File.read(config_file), [Symbol])
     @computer_name = data_hash['computer_name']
-    @user_name = data_hash['user_name']
     @email = data_hash['email']
     @password = data_hash['password']
+    @mesa_git_location = data_hash['mesa_git_location']
     @platform = data_hash['platform']
-    @processor = data_hash['processor']
-    @ram_gb = data_hash['ram_gb']
     @platform_version = data_hash['platform_version']
     @compiler = data_hash['compiler']
     @compiler_version = data_hash['compiler_version']
-    @last_tested = data_hash['last_tested'] || @last_tested
   end
 
   # create and return hash of parameters for a TestInstance submission
@@ -490,52 +465,6 @@ class Mesa
 
     end
     Mesa.new(mesa_dir: new_mesa_dir, use_svn: use_svn, using_sdk: using_sdk)
-  end
-
-  def self.log_since(last_tested = DEFAULT_REVISION)
-    # svn commit log back to, but excluding, the last revision tested
-    `svn log #{SVN_URI} -r #{last_tested + 1}:HEAD`
-  end
-
-  def self.log_lines_since(last_tested = DEFAULT_REVISION)
-    log_since(last_tested).split("\n").reject(&:empty?)
-  end
-
-  def self.add_commit(commits, revision, author)
-    commits << Commit.new
-    commits.last.revision = revision.to_i
-    commits.last.author = author
-    commits.last.message = []
-  end
-
-  def self.process_line(commits, line)
-    last = commits.last
-    if line =~ /^-+$/
-      # dashed lines separate commits
-      # Done with last commit (if it exists), so clean up message
-      last.message = last.message.join("\n") unless last.nil?
-    elsif line =~ /^r(\d+) \| (\w+) \| .* \| \d+ lines?$/
-      # first line of a commit, scrape data and make new commit
-      add_commit(commits, $1, $2)
-    else
-      # add lines to the message (will concatenate later to single String)
-      last.message << line.strip
-    end
-  end
-
-  # all commits since the given version number
-  def self.commits_since(last_tested = DEFAULT_REVISION)
-    commits = []
-    log_lines_since(last_tested).each { |line| process_line(commits, line) }
-    commits.sort_by(&:revision).reverse
-  end
-
-  def self.last_non_paxton_revision(last_tested = DEFAULT_REVISION)
-    commits_since(last_tested).each do |commit|
-      return commit.revision unless commit.author == 'bill_paxton'
-    end
-    # give out garbage if no valid commit is found
-    nil
   end
 
   def initialize(mesa_dir: ENV['MESA_DIR'], use_svn: true, using_sdk: true)

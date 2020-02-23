@@ -2,7 +2,7 @@
 
 # if true, submit cases to localhost:3000 and load local mesa_test library
 # rather than system version
-DEVELOPMENT_MODE = false
+DEVELOPMENT_MODE = true
 
 if DEVELOPMENT_MODE
   require_relative '../lib/mesa_test'
@@ -16,261 +16,159 @@ require 'yaml'
 class MesaTest < Thor
   DEVELOPMENT_URI = 'http://localhost:3000'.freeze
 
-  desc 'setup [CONFIG_FILE]', 'Setup MesaTestHub config file.'
+  desc 'test MESA_DIR [TEST CASE]', 'run and submit a test case or commit'
   long_desc <<-LONGDESC
-    If optional CONFIG_FILE is provided, search for that file and load it
-    to provide default values for configuration. If not provided, the default
-    file, ~/.mesa_test.yml, is used. The resulting config file is saved to
-    the same location it was read from.
-  LONGDESC
-  def setup(config_file = File.join(ENV['HOME'], '.mesa_test.yml'))
-    MesaTestSubmitter.new_from_config(config_file: config_file,
-                                      force_setup: true)
-  end
+    You must specify at least a mesa directory, which is a functioning git
+    repository. If you specify an optional test case, only that test case
+    will be tested. TEST_CASE can also be an integer corresponding to the
+    position it has in do1_test_source (or a concatenated version of that file
+    if no module is specified). Modules are searched/concatenated in this
+    order:
 
-  desc 'test_one MESA_DIR TEST_CASE', 'run, check, and submit one test case'
-  long_desc <<-LONGDESC
-  Run and check TEST_CASE, which resides in MESA_DIR/star/test_suite. Then
-  report results to MesaTestHub. TEST_CASE can also be an integer corresponding
-  to the line number of the test name in its do1_test_source file (or a
-  concatenated version of that file if no module is specified). Modules are
-  searched/concatenated in this order:
-
-  #{MesaTestCase.modules.map { |mod| '    ' + mod.to_s }.join(', ')}
+    #{MesaTestCase.modules.map { |mod| '    ' + mod.to_s }.join(', ')}
   LONGDESC
+
   option :force, desc: 'When submitting, assume submission data in ' +
                        '~/.mesa_test.yml are correct rather than checking ' +
-                       'with user.', type: :boolean, default: false,
+                       'with user.', type: :boolean, default: true,
                        aliases: '-f'
   option :submit, desc: 'Submit results (if any) to MesaTestHub.',
                   type: :boolean, default: true
-  option :diff, type: :boolean, default: false, desc: 'Assume checksums are ' + 
-                'up to date and perform diff', aliases: '-d'
-  option :svn, desc: 'Use svn to gather log/version data. Safe to use when ' +
-               'also using --no-submit; else may give bad version numbers.',
-               type: :boolean, default: true
-  option :set_sdk, desc: 'Override user- and test-generated data to deterine' +
-                   ' if the SDK is used and instead use value of --using_sdk.',
-                   type: :boolean, default: false
-  option :using_sdk, desc: 'Assume we are using the SDK and automatically ' +
-                     'determine SDK version. Ignored unless using --set-sdk).',
-                     type: :boolean, default: true
   option :module, desc: 'Which module to test and/or submit, if applicable.',
                   type: :string, default: 'all', aliases: '-m'                  
   option :log, type: :boolean, default: true, desc: 'Save yml file of test ' \
                'results in test case directory.'
-  option :auto_diff, desc: 'Automatically determine if diffs should be run '\
-                     'from svn log entry. Overrides --diff or --no-diff.',
-                     type: :boolean, default: false
-  def test_one(mesa_dir, test_case_name)
+  option :set_sdk, desc: 'Override user- and test-generated data to deterine' +
+                   ' if the SDK is used and instead use value of --using_sdk.',
+                   type: :boolean, default: false
+  option :using_sdk, desc: 'Assume we are using the SDK and automatically ' +
+                     'determine SDK version. Ignored unless using --set-sdk).',
+                     type: :boolean, default: true
+
+  def test(mesa_dir, test_case_name=nil)
     s = create_and_check_submitter(force: options[:force]) if options[:submit]
-    m = create_and_check_mesa(mesa_dir: mesa_dir, diff: options[:diff],
+    m = create_and_check_mesa(mesa_dir: mesa_dir, 
                               mod: options[:module].downcase.to_sym,
-                              use_svn: options[:svn], using_sdk: using_sdk?(s),
-                              auto_diff: options[:auto_diff])
-    t = create_and_check_test_case(mesa: m, test_case_name: test_case_name,
-                                   mod: options[:module].downcase.to_sym)
+                              using_sdk: using_sdk?(s))
+    if test_case_name
+      t = create_and_check_test_case(mesa: m, test_case_name: test_case_name,
+                                    mod: options[:module].downcase.to_sym)
 
-    # clean and run test
-    t.clean
-    t.do_one
+      # clean and run test
+      t.clean
+      t.do_one
 
-    # log results
-    t.log_results if options[:log]
+      # log results
+      t.log_results if options[:log]
 
-    # bail out if not submitting
-    return unless options[:submit]
+      # bail out if not submitting
+      return unless options[:submit]
 
-    # submit results
-    print 'Submitting results to ' + s.base_uri + '... '
-    s.submit(t)
-    puts "Done.\n"
-  end
-
-  desc 'test_revision MESA_DIR', 'test and submit all tests as a packaged version'
-  long_desc <<-LONGDESC
-  Run and check all test cases residing in MESA_DIR/star/test_suite. Then
-  report results to MesaTestHub. Specifically, runs and checks all tests
-  detailed in MESA_DIR/star/test_suite/do1_test_source. Also submit version
-  information with test instances. Submits all test instances and version data
-  in a single request rather than case-by-case in `test_all`.
-  LONGDESC
-
-  option :force, desc: 'When submitting, assume submission data in ' +
-                       '~/.mesa_test.yml are correct rather than checking ' +
-                       'with user.', type: :boolean, default: false,
-                       aliases: '-f'
-  option :submit, desc: 'Submit results (if any) to MesaTestHub.',
-                  type: :boolean, default: true
-  option :diff, type: :boolean, default: false, desc: 'Assume checksums are ' + 
-                'up to date and perform diff', aliases: '-d'
-  option :svn, desc: 'Use svn to gather log/version data. Safe to use when ' +
-               'also using --no-submit; else may give bad version numbers.',
-               type: :boolean, default: true
-  option :set_sdk, desc: 'Override user- and test-generated data to deterine' +
-                   ' if the SDK is used and instead use value of --using_sdk.',
-                   type: :boolean, default: false
-  option :using_sdk, desc: 'Assume we are using the SDK and automatically ' +
-                     'determine SDK version. Ignored unless using --set-sdk).',
-                     type: :boolean, default: true
-  option :module, desc: 'Which module to test and/or submit, if applicable.',
-                  type: :string, default: 'all', aliases: '-m'                  
-  option :log, type: :boolean, default: true, desc: 'Save yml file of test ' \
-               'results in test case directory.'
-  option :auto_diff, desc: 'Automatically determine if diffs should be run '\
-                     'from svn log entry. Overrides --diff or --no-diff.',
-                     type: :boolean, default: false
-  def test_revision(mesa_dir)
-    s = create_and_check_submitter(force: options[:force]) if options[:submit]
-    m = create_and_check_mesa(mesa_dir: mesa_dir, diff: options[:diff],
-                              mod: options[:module].downcase.to_sym,
-                              use_svn: options[:svn],
-                              using_sdk: using_sdk?(s),
-                              auto_diff: options[:auto_diff])
-
-    # run all tests
-    m.each_test_run_and_diff(log_results: options[:log],
-                             mod: options[:module].downcase.to_sym)
-
-    # submit all tests
-    s.submit_revision(m) if options[:submit]
-  end
-
-
-  desc 'submit_one MESA_DIR TEST_CASE', 'submit one completed test case'
-  long_desc <<-LONGDESC
-  Load complete test case data from existing YAML file and submit to MESA.
-  TEST_CASE can also be an integer corresponding to the line number of the test
-  name in its do1_test_source file (or a concatenated version of that file if
-  no module is specified). Modules are searched/concatenated in this order:
-
-  #{MesaTestCase.modules.map { |mod| '    ' + mod.to_s }.join(', ')}
-  LONGDESC
-
-  option :force, desc: 'When submitting, assume submission data in ' +
-                       '~/.mesa_test.yml are correct rather than checking ' +
-                       'with user.', type: :boolean, default: false,
-                       aliases: '-f'
-  option :svn, desc: 'Use svn to gather log/version data. NECESSARY TO GET ' +
-               'ACCURATE VERSION NUMBER.', type: :boolean, default: true
-  option :set_sdk, desc: 'Override user- and test-generated data to deterine' +
-                   ' if the SDK is used and instead use value of --using_sdk.',
-                   type: :boolean, default: false
-  option :using_sdk, desc: 'Assume we are using the SDK and automatically ' +
-                     'determine SDK version. Ignored unless using --set-sdk).',
-                     type: :boolean, default: true
-  option :module, desc: 'Which module to test and/or submit, if applicable.',
-                  type: :string, default: 'all', aliases: '-m'
-  def submit_one(mesa_dir, test_case_name)
-    s = create_and_check_submitter(force: options[:force])
-    m = create_and_check_mesa(mesa_dir: mesa_dir,
-                              mod: options[:module].downcase.to_sym,
-                              using_sdk: using_sdk?(s), use_svn: options[:svn])
-    t = create_and_check_test_case(mesa: m, test_case_name: test_case_name,
-                                   mod: options[:module].downcase.to_sym)
-    # load test results
-    t.load_results
-
-    # submit results
-    print 'Submitting results to ' + s.base_uri + '... '
-    s.submit(t)
-    puts "Done.\n"
-  end
-
-  desc 'submit_revision MESA_DIR', 'submit version with pre-run test cases'
-  long_desc <<-LONGDESC
-  Load results for all test cases residing in MESA_DIR/star/test_suite. Then
-  submit results to MesaTestHub. Specifically, loads and submits all tests
-  detailed in MESA_DIR/star/test_suite/do1_test_source along with version data
-  (number, author, and commit message). Unlike submit_all, this submits all
-  test cases AND version info in a single request rather than just the cases
-  in series.
-  LONGDESC
-  option :force, desc: 'When submitting, assume submission data in ' +
-                       '~/.mesa_test.yml are correct rather than checking ' +
-                       'with user.', type: :boolean, default: false,
-                       aliases: '-f'
-  option :module, desc: 'Which module to test and/or submit, if applicable.',
-                  type: :string, default: 'all', aliases: '-m'                       
-  option :svn, desc: 'Use svn to gather log/version data. NECESSARY TO GET ' +
-               'ACCURATE VERSION NUMBER.', type: :boolean, default: true
-  option :set_sdk, desc: 'Override user- and test-generated data to deterine' +
-                   ' if the SDK is used and instead use value of --using_sdk.',
-                   type: :boolean, default: false
-  option :using_sdk, desc: 'Assume we are using the SDK and automatically ' +
-                     'determine SDK version. Ignored unless using --set-sdk).',
-                     type: :boolean, default: true
-  def submit_revision(mesa_dir)
-    s = create_and_check_submitter(force: options[:force])
-    m = create_and_check_mesa(mesa_dir: mesa_dir,
-                              mod: options[:module].downcase.to_sym,
-                              use_svn: options[:svn], using_sdk: using_sdk?(s))
-    begin
-      m.check_installation
-    rescue MesaDirError
-      shell.say %q{This MESA installation doesn't seem to be compiled } \
-        'properly. Submitting a compilation failure to MESATestHub.', :red
+      # submit results
+      shell.say 'Submitting results to ' + s.base_uri + '... ', :blue
+      s.submit(t)
+      shell.say "Done.\n", :green
     else
-      # load all test data
-      m.each_test_load_results(mod: options[:module].downcase.to_sym)
-    ensure
+      # run all tests
+      m.each_test_run_and_diff(log_results: options[:log],
+                               mod: options[:module].downcase.to_sym)
+
       # submit all tests
-      s.submit_revision(m)
+      s.submit_commit(m) if options[:submit]
     end
   end
 
-
-  desc 'install VERSION_NUMBER MESA_DIR', 'download and install mesa release '\
-    'VERSION_NUMBER to directory MESA_DIR'
+  desc 'submit MESA_DIR [TEST CASE]', 'submit a test case or commit'
   long_desc <<-LONGDESC
-  Calls to svn to install mesa release VERSION_NUMBER into the directory
-  MESA_DIR. Basically just an svn checkout followed by going into the directory
-  and running ./clean and ./install. SDK or compilers must be set up prior.
-  Does not affect the user's MESA_DIR or other environment variables.
+    You must specify at least a mesa directory, which is a functioning git
+    repository. If you specify an optional test case, only that test case
+    will be submitted. TEST_CASE can also be an integer corresponding to the
+    position it has in do1_test_source (or a concatenated version of that file
+    if no module is specified). Modules are searched/concatenated in this
+    order:
+
+    #{MesaTestCase.modules.map { |mod| '    ' + mod.to_s }.join(', ')}
   LONGDESC
-  def install(version, mesa_dir)
-    m = Mesa.download(version_number: version, new_mesa_dir: mesa_dir)
+
+  option :force, desc: 'When submitting, assume submission data in ' +
+                       '~/.mesa_test.yml are correct rather than checking ' +
+                       'with user.', type: :boolean, default: true,
+                       aliases: '-f'
+  option :module, desc: 'Which module to test and/or submit, if applicable.',
+                  type: :string, default: 'all', aliases: '-m'
+  option :empty, desc: 'Whether any test cases will be submitted. Useful for' +
+                       'indicatinc compilation status independently of ' +
+                       'single test submissions.', 
+                 type: :boolean, default: false, aliases: '-e'
+  
+  def submit(mesa_dir, test_case_name=nil)
+    s = create_and_check_submitter(force: options[:force])
+    m = create_and_check_mesa(mesa_dir: mesa_dir,
+                              mod: options[:module].downcase.to_sym,
+                              using_sdk: using_sdk?(s))
+    if test_case_name
+      t = create_and_check_test_case(mesa: m, test_case_name: test_case_name,
+                                     mod: options[:module].downcase.to_sym)
+      # load test results
+      t.load_results
+
+      # submit results
+      shell.say 'Submitting results to ' + s.base_uri + '... ', :blue
+      s.submit(t)
+      shell.say "Done.\n", :green
+    else
+      begin
+        m.check_installation
+      rescue MesaDirError
+        shell.say %q{This MESA installation doesn't seem to be compiled } \
+          'properly. Submitting a compilation failure to MESATestHub.', :red
+      else
+        # load all test data
+        m.each_test_load_results(mod: options[:module].downcase.to_sym)
+      ensure
+        # submit all tests
+        s.submit_commit(m)
+      end
+    end
+  end
+
+  desc 'install SHA MESA_DIR', 'checkout and install a commit'
+  long_desc <<-LONGDESC
+  Checks out a particular commit to an existing MESA repository clone and
+  installs it MESA_DIR. Basically just a git checkout followed by going into
+  the directory and running ./clean and ./install. SDK or compilers must be set
+  up prior. Does not affect the user's MESA_DIR or other environment variables.
+  LONGDESC
+  def install(sha, mesa_dir)
+    m = Mesa.checkout(sha: sha, mesa_dir: mesa_dir)
     m.clean
     m.install
   end
 
-  desc 'install_and_test_revision VERSION_NUMBER MESA_DIR', 'download and '\
-  'install mesa release VERSION_NUMBER to directory MESA_DIR, run all tests,'\
-  'and submit version and test data in single request.'
+  desc 'install_and_test SHA MESA_DIR', 'Install, test, and submit an entire '\
+  'MESA commit.'
   long_desc <<-LONGDESC
-  Calls to svn to install mesa release VERSION_NUMBER into the directory
-  MESA_DIR. Basically just an svn checkout followed by going into the directory
-  and running ./clean and ./install. SDK or compilers must be set up prior.
+  Checks out a particular commit (specified by SHA) in an existing mesa git
+  repository located at MESA_DIR. Then go into the directory
+  and run ./clean and ./install. SDK or compilers must be set up prior.
   Once installation is complete, run the test suite, and report results
-  (version and all test data) to MesaTestHub in a single request (whereas
-  install_and_test_all only submits test data and does so in a serial fashion).
+  (commit and all test data) to MesaTestHub in a single request.
   Does not affect the user's MESA_DIR or other environment variables. This is
   basically a shortcut for running
 
-    `mesa_test install SOME_VERSION SOME_DIR`
+    `mesa_test install SOME_SHA SOME_DIR`
 
   followed by
 
-    `mesa_test test_revision SOME_DIR`
-
-  If VERSION_NUMBER is 'non-paxton' or 'non_paxton', then the most recent
-  commit by anyone other than Bill Paxton ('bill_paxton') is tested and the
-  --diff flag is ignored and set to false. Note that using 'HEAD' for version
-  number will automatically select the most recent release, regardless of the
-  author.
+    `mesa_test test SOME_DIR`
   LONGDESC
 
   option :force, desc: 'When submitting, assume submission data in ' +
                        '~/.mesa_test.yml are correct rather than checking ' +
-                       'with user.', type: :boolean, default: false,
+                       'with user.', type: :boolean, default: true,
                        aliases: '-f'
   option :submit, desc: 'Submit results (if any) to MesaTestHub.',
                   type: :boolean, default: true
-  option :diff, type: :boolean, default: false, desc: 'Assume checksums are ' + 
-                'up to date and perform diff', aliases: '-d'
-  option :svn, desc: 'Use svn to gather log/version data. Safe to use when ' +
-               'also using --no-submit; else may give bad version numbers.',
-               type: :boolean, default: true
   option :set_sdk, desc: 'Override user- and test-generated data to deterine' +
                    ' if the SDK is used and instead use value of --using_sdk.',
                    type: :boolean, default: false
@@ -283,44 +181,46 @@ class MesaTest < Thor
                    'submission of complete results.', default: false
   option :log, type: :boolean, default: true, desc: 'Save yml file of test ' \
                'results in test case directory.'
-  option :auto_diff, desc: 'Automatically determine if diffs should be run '\
-                     'from svn log entry. Overrides --diff or --no-diff.',
-                     type: :boolean, default: false
-  def install_and_test_revision(version, mesa_dir)
+
+  def install_and_test(sha, mesa_dir)
     s = nil # to make sure using_sdk? below will work properly
     s = create_and_check_submitter(force: options[:force]) if options[:submit]
-    mesa_version, diff = filter_version_and_diff(version, s)
-    if mesa_version.nil?
-      puts 'No commits by anyone other than Bill Paxton since '\
-        "r#{s.last_tested}. Exiting."
-      return
-    end
-    m = Mesa.download(version_number: mesa_version, new_mesa_dir: mesa_dir,
-                      use_svn: options[:svn], using_sdk: using_sdk?(s))
+    m = Mesa.download(sha: sha, mesa_dir: mesa_dir, using_sdk: using_sdk?(s))
     begin
       m.clean
       m.install
     rescue MesaDirError
-      shell.say "\nFailed in compiling MESA r-#{m.version_number}.", :red
+      shell.say "\nFailed in compiling MESA.", :red
     else
       check_mesa(m)
-      update_mesa(mesa: m, diff: diff, mod: options[:module].downcase.to_sym,
-                  auto_diff: options[:auto_diff])
+      update_mesa(mesa: m, mod: options[:module].downcase.to_sym)
 
       # run all tests. Don't be fooled, whether or not a diff happens is set
       # by the diff attribute of the mesa object, set above.
       m.each_test_run_and_diff(mod: options[:module].downcase.to_sym,
                                log_results: options[:log])
     ensure
-      # submit all version and test data
+      # submit all commit and test data
       successfully_submitted = false
-      successfully_submitted = s.submit_revision(m) if options[:submit]
+      successfully_submitted = s.submit_commit(m) if options[:submit]
 
       # if requested, installation and submission are successful, destroy the
       # directory
       m.destroy if successfully_submitted && options[:destroy] && m.installed?
     end
   end  
+
+  desc 'setup [CONFIG_FILE]', 'Setup MesaTestHub config file.'
+  long_desc <<-LONGDESC
+    If optional CONFIG_FILE is provided, search for that file and load it
+    to provide default values for configuration. If not provided, the default
+    file, ~/.mesa_test.yml, is used. The resulting config file is saved to
+    the same location it was read from.
+  LONGDESC
+  def setup(config_file = File.join(ENV['HOME'], '.mesa_test.yml'))
+    MesaTestSubmitter.new_from_config(config_file: config_file,
+                                      force_setup: true)
+  end
 
   private
 
@@ -334,7 +234,7 @@ class MesaTest < Thor
     end
   end
 
-  def create_and_check_submitter(force: false)
+  def create_and_check_submitter(force: true)
     s = if DEVELOPMENT_MODE
           MesaTestSubmitter.new_from_config(base_uri: DEVELOPMENT_URI)
         else
@@ -347,12 +247,10 @@ class MesaTest < Thor
     s
   end
 
-  def create_and_check_mesa(mesa_dir:, use_svn: true, diff: true, mod: :all,
-                            using_sdk: true, auto_diff: false)
-    m = Mesa.new(mesa_dir: mesa_dir, use_svn: use_svn, using_sdk: using_sdk)
+  def create_and_check_mesa(mesa_dir:, mod: :all, using_sdk: true)
+    m = Mesa.new(mesa_dir: mesa_dir, using_sdk: using_sdk)
     check_mesa(m)
-    update_mesa(mesa: m, diff: diff, mod: mod, auto_diff: auto_diff)
-    m
+    update_mesa(mesa: m, mod: mod)
   end
 
   def check_mesa(mesa)
@@ -362,12 +260,9 @@ class MesaTest < Thor
     end
   end
 
-  def update_mesa(mesa:, diff: true, mod: :all, auto_diff: false)
+  def update_mesa(mesa:, mod: :all)
     mesa.load_test_source_data(mod: mod)
-    # choose whether to update checksums.
-    mesa.update_checksums = !diff unless diff.nil?
-    # automatically figure out diff situation. Overrides choice from diff!
-    mesa.determine_diff if auto_diff
+    mesa
   end
 
   def create_and_check_test_case(mesa:, test_case_name:, mod: :all)
@@ -383,14 +278,6 @@ class MesaTest < Thor
     end.join(' or ')
     msg << '.'
     raise TestCaseDirError, msg
-  end
-
-  def filter_version_and_diff(version, submitter)
-    if %w[non-paxton non_paxton].include?(version.to_s.downcase)
-      [Mesa.last_non_paxton_revision(submitter.last_tested), false]
-    else
-      [version, options[:diff]]
-    end
   end
 
   # determine whether or not we can assume the test should be / was run with

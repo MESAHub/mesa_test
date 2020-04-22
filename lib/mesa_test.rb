@@ -707,7 +707,7 @@ class Mesa
       # read through each line and find four data, name, success string, final
       # model name, and photo. Either of model name and photo can be "skip"
       source_lines.each do |line|
-        no_skip = /^do_one (.+)\s+"([^"]*)"\s+"([^"]+)"\s+(x?\d+)/
+        no_skip = /^do_one (.+)\s+"([^"]*)"\s+"([^"]+)"\s+(x?\d+|auto)/
         one_skip = /^do_one (.+)\s+"([^"]*)"\s+"([^"]+)"\s+skip/
         two_skip = /^do_one (.+)\s+"([^"]*)"\s+skip\s+skip/
         found_test = false
@@ -1403,10 +1403,22 @@ class MesaTestCase
     # abort if there is not photo specified
     return unless photo
 
+    # get penultimate photo
+    if photo == "auto" then
+      # get all photos [single-star (x100) or binary (b_x100); exclude binary stars (1_x100, 2_x100)]
+      photo_files = Dir["photos/*"].select{|p| p =~ /^photos\/(b_)?x?\d+$/}
+      # pull out 2nd most recent one
+      re_photo = File.basename(photo_files.sort_by { |file_name| File.stat(file_name).mtime } [-2])
+      # if binary, trim off prefix
+      re_photo.delete_prefix!("b_")
+    else
+      re_photo = photo
+    end
+
     # check that photo file actually exists
-    unless File.exist?(File.join('photos', photo)) ||
-           File.exist?(File.join('photos1', photo)) ||
-           File.exist?(File.join('photos', "b_#{photo}"))
+    unless File.exist?(File.join('photos', re_photo)) ||
+           File.exist?(File.join('photos1', re_photo)) ||
+           File.exist?(File.join('photos', "b_#{re_photo}"))
       return fail_test(:photo_file)
     end
 
@@ -1416,17 +1428,17 @@ class MesaTestCase
     # do restart and consolidate output. Command depends on if we have access
     # to SDK version of gnu time.
     re_command = if ENV['MESASDK_ROOT'] && File.exist?(File.join(ENV['MESASDK_ROOT'], 'bin', 'time'))
-                   %q(command time -f '%M' -o mem-re.txt ./re ) + "#{photo}" \
+                   %q(command time -f '%M' -o mem-re.txt ./re ) + "#{re_photo}" \
                      ' >> out.txt 2> err.txt'
                  else
-                   "./re #{photo} >> out.txt 2> err.txt"
+                   "./re #{re_photo} >> out.txt 2> err.txt"
                  end
 
     puts re_command
-    # puts "./re #{photo} >> out.txt 2> err.txt"
+    # puts "./re #{re_photo} >> out.txt 2> err.txt"
     re_start = Time.now
-    # bash_execute("./re #{photo} >> out.txt 2> err.txt")
-    # bash_execute(%Q{command time -f '%M' -o mem-re.txt ./re #{photo} >> out.txt 2> err.txt})
+    # bash_execute("./re #{re_photo} >> out.txt 2> err.txt")
+    # bash_execute(%Q{command time -f '%M' -o mem-re.txt ./re #{re_photo} >> out.txt 2> err.txt})
     bash_execute(re_command)
     re_finish = Time.now
     @re_time = (re_finish - re_start).to_i

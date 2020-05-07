@@ -822,7 +822,7 @@ class Mesa
   def check_mesa_dir
     res = File.exist?(File.join(mesa_dir, 'data', 'version_number'))
     MesaTestCase.modules.each do |mod|
-      res &&= File.directory?(test_suite_dir(mod: mod))
+      res &&= dir_or_symlink_exists?(test_suite_dir(mod: mod))
     end
     res
   end
@@ -1265,7 +1265,7 @@ class MesaTestCase
   # make sure that we can get to the test case directory. Throw an exception
   # if we cannot
   def check_test_case
-    return if File.directory? test_case_dir
+    return if dir_or_symlink_exists? test_case_dir
     raise TestCaseDirError, "No such test case: #{test_case_dir}."
   end
 
@@ -1273,7 +1273,7 @@ class MesaTestCase
   # directory
   def check_mesa_dir
     is_valid = File.exist?(File.join(mesa_dir, 'data', 'version_number')) &&
-               File.directory?(test_suite_dir)
+               dir_or_symlink_exists?(test_suite_dir)
     raise MesaDirError, "Invalid MESA dir: #{mesa_dir}" unless is_valid
   end
 
@@ -1646,6 +1646,11 @@ def generate_seeds_rb(mesa_dir, outfile)
     f.puts '  ]'
     f.puts ')'
   end
+end
+
+# Check if path is directory or symlink
+def dir_or_symlink_exists?(path)
+  File.directory?(path) || File.symlink?(path)
 end
 
 # force the execution to happen with bash

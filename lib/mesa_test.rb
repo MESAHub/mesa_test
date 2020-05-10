@@ -1403,12 +1403,18 @@ class MesaTestCase
     # abort if there is not photo specified
     return unless photo
 
-    # get penultimate photo
+    # get antepenultimate photo
     if photo == "auto" then
       # get all photos [single-star (x100) or binary (b_x100); exclude binary stars (1_x100, 2_x100)]
       photo_files = Dir["photos/*"].select{|p| p =~ /^photos\/(b_)?x?\d+$/}
-      # pull out 2nd most recent one
-      re_photo = File.basename(photo_files.sort_by { |file_name| File.stat(file_name).mtime } [-2])
+      # sort by filesystem modification time
+      sorted_photo_files = photo_files.sort_by { |file_name| File.stat(file_name).mtime }
+      # if you can, pull out 3rd most recent one; otherwise take the oldest
+      if sorted_photo_files.length >= 3 then
+        re_photo = File.basename(sorted_photo_files[-3])
+      else
+        re_photo = File.basename(sorted_photo_files[0])
+      end
       # if binary, trim off prefix
       re_photo = re_photo.sub("b_", "")
     else

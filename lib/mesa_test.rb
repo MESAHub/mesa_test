@@ -88,15 +88,15 @@ e-mail and password will be stored in plain text.'
     if confirm_computer_data
       save_computer_data
     else
-      puts "Restarting wizard.\n"
+      shell.say "Restarting wizard.\n"
       setup
     end
   end
 
   def self.new_from_config(
-    config_file: File.join(ENV['HOME'], '.mesa_test', 'config.yml'), force_setup: false,
+    config_file: File.join(ENV['HOME'], '.mesa_test', 'config.yml'),
+    force_setup: false,
     base_uri: DEFAULT_URI
-    # base_uri: 'http://localhost:3000'
   )
     new_submitter = new(config_file: config_file, base_uri: base_uri)
     if force_setup
@@ -145,7 +145,6 @@ e-mail and password will be stored in plain text.'
     end
     @platform_version = platform_version || ''
     @processor = processor || ''
-    @ram_gb = ram_gb || 0
     @compiler = compiler || 'SDK'
     @compiler_version = compiler_version || ''
     @config_file = config_file || File.join(ENV['HOME'], '.mesa_test',
@@ -225,118 +224,25 @@ e-mail and password will be stored in plain text.'
     @compiler_version = data_hash['compiler_version']
   end
 
-  # create and return hash of parameters for a TestInstance submission
-  # Note: prefer test case's self-reported compiler and compiler version over
-  # user reported
-  def submit_params(test_case)
-    res = {
-      test_case: test_case.test_name,
-      mod: test_case.mod,
-      computer: computer_name,
-      email: email,
-      password: password,
-      runtime_seconds: test_case.runtime_seconds,
-      re_time: test_case.re_time,
-      total_runtime_seconds: test_case.total_runtime_seconds,
-      mesa_version: test_case.mesa_version,
-      passed: test_case.passed? ? 1 : 0,
-      compiler: test_case.compiler || compiler,
-      compiler_version: test_case.compiler_version || compiler_version,
-      platform_version: platform_version,
-      omp_num_threads: test_case.test_omp_num_threads,
-      success_type: test_case.success_type,
-      failure_type: test_case.failure_type,
-      steps: test_case.steps,
-      retries: test_case.retries,
-      backups: test_case.backups,
-      checksum: test_case.checksum,
-      rn_mem: test_case.rn_mem,
-      re_mem: test_case.re_mem,
-      summary_text: test_case.summary_text
-    }
-
-    # enter in test-specific data, DISABLED FOR NOW
-    # test_case.data_names.each do |data_name|
-    #   unless test_case.data[data_name].nil?
-    #     res[data_name] = test_case.data[data_name]
-    #   end
-    # end
-    res
-  end
-
-  def revision_submit_params(mesa)
-    # only query svn if we didn't do it in the first place. Probably
-    # unnecessary
-    mesa.load_svn_data if mesa.use_svn? && mesa.svn_version.nil?     
-    # version gives data about version
-    # user gives data about the user and computer submitting information
-    # instances is array of hashes that identify test instances (more below)
-    res = {
-            version: {number: mesa.version_number, compiled: mesa.installed?},
-            user: {email: email, password: password, computer: computer_name},
-            instances: []
-          }
-    if mesa.use_svn?
-      res[:version][:author] = mesa.svn_author
-      res[:version][:log] = mesa.svn_log
-    end
-
-    # bail out if installation failed (and we care)
-    return [res, []] unless res[:version][:compiled]
-
-    # Successfully compiled, now gather test instance data.
-
-    # hold on to test case names that fail in synthesizing params
-    has_errors = []
-
-    # each instance has basic information in :test_instance and extra
-    # information that requires the web app to work, stored in :extra
-    mesa.test_names.each do |mod, names|
-      names.each do |test_name|
-        begin
-          test_case = mesa.test_cases[mod][test_name]
-          res[:instances] << {
-            test_instance: {
-              runtime_seconds: test_case.runtime_seconds,
-              re_time: test_case.re_time,
-              total_runtime_seconds: test_case.total_runtime_seconds,
-              passed: test_case.passed?,
-              compiler: test_case.compiler || compiler,
-              compiler_version: test_case.compiler_version || compiler_version,
-              platform_version: platform_version,
-              omp_num_threads: test_case.test_omp_num_threads,
-              success_type: test_case.success_type,
-              failure_type: test_case.failure_type,
-              steps: test_case.steps,
-              retries: test_case.retries,
-              backups: test_case.backups,
-              checksum: test_case.checksum,
-              rn_mem: test_case.rn_mem,
-              re_mem: test_case.re_mem,
-              summary_text: test_case.summary_text
-            },
-            extra: { test_case: test_name, mod: mod }
-          }
-        rescue TestCaseDirError
-          shell.say "Passage status for #{test_case.test_name} not yet "\
-                    'known. Run test first and then submit.', :red
-          has_errors << test_case
-        end
-      end
-    end
-    [res, has_errors]
-  end
-
+  # Parameters to be submitted in JSON format for reporting information about
+  # the submitting user and computer
   def submitter_params
     {email: email, password: password, computer: computer_name}
   end
 
+  # Parameters to be submitted in JSON format for reporting information about
+  # the overall commit being tested; used even if only submitting an entire
+  # test. This also determines if the submission is for an entire commit 
+  # (compilation information and every test), an empty commit (just
+  # compilation information), or a non-empty, but also non-entire submission
+  # (results for a single test without compilation information)
   def commit_params(mesa, entire: true, empty: false)
     {sha: mesa.sha, compiled: mesa.installed?, entire: entire, empty: empty}
   end
 
-  # given a valid +Mesa+ object, create an array of hashes that describe the
-  # test cases and the test results
+  # Given a valid +Mesa+ object, create an array of hashes that describe the
+  # test cases and the test results. These will be encoded as an array of
+  # JSON objects.
   def instance_params(mesa)
     has_errors = []
     res = []
@@ -382,7 +288,7 @@ e-mail and password will be stored in plain text.'
     res
   end
 
-  # parameters for a single test case. +mesa+ is an instance of +Mesa+, and
+  # Parameters for a single test case. +mesa+ is an instance of +Mesa+, and
   # +test_case_name+ is a string that is a valid test case name OR a number
   # indicating its position in the list of test cases
   def single_instance_params(test_case)
@@ -409,6 +315,9 @@ e-mail and password will be stored in plain text.'
     }]
   end
 
+  # Phone home to testhub and confirm that computer and user are valid. Useful
+  # for confirming that submissions will be accepted before wasting time on a
+  # test later.
   def confirm_computer
     uri = URI.parse(base_uri + '/check_computer.json')
     https = Net::HTTP.new(uri.hostname, uri.port)
@@ -423,125 +332,6 @@ e-mail and password will be stored in plain text.'
       computer_name: computer_name
     }.to_json
     JSON.parse(https.request(request).body).to_hash
-  end
-
-  # attempt to post to MesaTestHub with test_case parameters
-  # returns true if the id is in the returned JSON (indicating success)
-  # otherwise returns false (maybe failed in authorization or in finding
-  # computer or test case) No error thrown for failure, though.
-  def submit(test_case)
-    uri = URI.parse(base_uri + '/test_instances/submit.json')
-    https = Net::HTTP.new(uri.hostname, uri.port)
-    https.use_ssl = true if base_uri.include? 'https'
-
-    request = Net::HTTP::Post.new(
-      uri,
-      initheader = { 'Content-Type' => 'application/json' }
-    )
-    begin
-      request.body = submit_params(test_case).to_json
-    rescue TestCaseDirError
-      shell.say "\nPassage status for #{test_case.test_name} not yet known. " \
-                'Run test first and then submit.', :red
-      return false
-    end
-
-    # verbose = true
-    # puts "\n" if verbose
-    # puts JSON.parse(request.body).to_hash if verbose
-
-    response = https.request request
-    # puts JSON.parse(response.body).to_hash if verbose
-    response.is_a? Net::HTTPCreated
-  end
-
-  def submit_all(mesa, mod = :all)
-    submitted_cases = []
-    unsubmitted_cases = []
-    if mod == :all
-      success = true
-      mesa.test_names.each_key do |this_mod|
-        success &&= submit_all(mesa, mod = this_mod)
-      end
-    else
-      mesa.test_names[mod].each do |test_name|
-        # get at test case
-        test_case = mesa.test_cases[mod][test_name]
-        # try to submit and note if it does or doesn't successfully submit
-        submitted = false
-        submitted = submit(test_case) unless test_case.outcome == :not_tested
-        if submitted
-          submitted_cases << test_name
-        else
-          unsubmitted_cases << test_name
-        end
-      end
-      puts "\nSubmission results for #{mod} module:"
-      puts '#####################################'
-      if !submitted_cases.empty?
-        shell.say 'Submitted the following cases:', :green
-        puts submitted_cases.join("\n")
-      else
-        shell.say 'Did not successfully submit any cases.', :red
-      end
-      unless unsubmitted_cases.empty?
-        puts "\n\n\n"
-        shell.say 'Failed to submit the following cases:', :red
-        puts unsubmitted_cases.join("\n")
-      end
-      # return true and update last tested if all cases were submitted
-      success = submitted_cases.length == mesa.test_names[mod].length
-      if success
-        @last_tested = mesa.version_number
-        shell.say "\n\nUpdating last tested revision to #{last_tested}."
-        save_computer_data
-      end
-    end
-    # return boolean indicating whether or not all cases successfully
-    # SUBMITTED (irrespective of passing status)
-    success
-  end
-
-  # similar to submit_all, but does EVERYTHING in one post, including
-  # version information. No support for individual modules now.
-  def submit_revision(mesa)
-    uri = URI.parse(base_uri + '/versions/submit_revision.json')
-    https = Net::HTTP.new(uri.hostname, uri.port)
-    https.use_ssl = true if base_uri.include? 'https'
-
-    request = Net::HTTP::Post.new(
-      uri,
-      initheader = { 'Content-Type' => 'application/json' }
-    )
-    request_data, error_cases = revision_submit_params(mesa)
-    if request_data[:instances].empty? && mesa.installed?
-      shell.say "No completed test data found in #{mesa.mesa_dir}. Aborting.",
-                :red
-      return false
-    end
-    request.body = request_data.to_json
-
-    # verbose = true
-    # puts "\n" if verbose
-    # puts JSON.parse(request.body).to_hash if verbose
-
-    response = https.request request
-    # puts JSON.parse(response.body).to_hash if verbose
-    if !response.is_a? Net::HTTPCreated
-      shell.say "\nFailed to submit some or all cases and/or version data.",
-                :red
-      false
-    elsif !error_cases.empty?
-      shell.say "\nFailed to gather data for the following cases:", :red
-      error_cases.each { |tc| shell.say "  #{tc.test_name}", :red }
-      false
-    else
-      shell.say "\nSuccessfully submitted revision #{mesa.version_number}.", :green
-      @last_tested = mesa.version_number
-      shell.say "\n\nUpdating last tested revision to #{last_tested}."
-      save_computer_data
-      true      
-    end
   end
 
   # submit entire commit's worth of test cases, OR submit compilation status
@@ -623,22 +413,7 @@ class Mesa
   SVN_URI = 'https://subversion.assembla.com/svn/mesa\^mesa/trunk'.freeze    
 
   attr_reader :mesa_dir, :mirror_dir, :test_data, :test_names, :test_cases, 
-              :shell, :svn_version, :svn_author, :svn_log, :using_sdk
-
-  def self.download(version_number: nil, new_mesa_dir: nil, use_svn: true,
-    using_sdk: true)
-    new_mesa_dir ||= File.join(ENV['HOME'], 'mesa-test-r' + version_number.to_s)
-    svn_command = "svn co -r #{version_number} #{SVN_URI} #{new_mesa_dir}"
-    success = bash_execute(svn_command)
-    unless success
-      raise MesaDirError, 'Encountered a problem in downloading mesa ' \
-                          "revision #{version_number}. Perhaps svn isn't " \
-                          'working properly?' + "\n\n"\
-                          'Tried the following command: ' + svn_command
-
-    end
-    Mesa.new(mesa_dir: new_mesa_dir, use_svn: use_svn, using_sdk: using_sdk)
-  end
+              :shell, :using_sdk
 
   def self.checkout(sha: nil, work_dir: nil, mirror_dir: nil, using_sdk: true)
     m = Mesa.new(mesa_dir: work_dir, mirror_dir: mirror_dir,
@@ -647,14 +422,11 @@ class Mesa
     m
   end
 
-  def initialize(mesa_dir: ENV['MESA_DIR'], mirror_dir: nil,
-                 use_svn: true, using_sdk: true)
+  def initialize(mesa_dir: ENV['MESA_DIR'], mirror_dir: nil, using_sdk: true)
     # absolute_path ensures that it doesn't matter where commands are executed
     # from
     @mesa_dir = File.absolute_path(mesa_dir)
-    puts @mesa_dir
     @mirror_dir = File.absolute_path(mirror_dir)
-    @use_svn = use_svn
     @using_sdk = using_sdk
 
     # these get populated by calling #load_test_data
@@ -664,13 +436,6 @@ class Mesa
 
     # way to output colored text
     @shell = Thor::Shell::Color.new
-
-    # these can be populated by calling load_svn_data
-    # don't care about this garbage in the git era, testhub takes care of it!
-    @svn_version = nil
-    @svn_author = nil
-    @svn_log = nil
-    load_svn_data if use_svn?
   end
 
   def checkout(sha: 'HEAD')
@@ -721,59 +486,12 @@ class Mesa
     bashticks("git -C #{mesa_dir} rev-parse HEAD")
   end
 
-  def use_svn?
-    @use_svn
-  end
-
-  def version_number
-    version = @svn_version || 0
-    # fall back to MESA_DIR/data's version number svn didn't work
-    version = data_version_number unless version > 0
-    version
-  end
-
-  def log_entry
-    `svn log #{mesa_dir} -r #{version_number}`
-  end
-
-  def load_svn_data
-    # if this number is bad, #version_number will use fallback method
-    @svn_version = svn_version_number
-    lines = log_entry.split("\n").reject { |line| line =~ /^-+$/ or line.empty?}
-    data_line = lines.shift
-    revision, author, date, length = data_line.split('|')
-    @svn_author = author.strip
-    @svn_log = lines.join("\n").strip
-  end
-
-  # get version number from svn (preferred method)
-  def svn_version_number
-    # match output of svn info to a line with the revision, capturing the
-    # number, and defaulting to 0 if none is found.
-    matches = /Revision\:\s+(\d+)/.match(`svn info #{mesa_dir}`)
-    unless matches.nil?
-      return matches[1].to_i
-    end
-    return 0
-  rescue Errno::ENOENT
-    return 0
-  end
-
-  # read version number from $MESA_DIR/data/version_number
-  def data_version_number
-    contents = ''
-    File.open(File.join(mesa_dir, 'data', 'version_number'), 'r') do |f|
-      contents = f.read
-    end
-    contents.strip.to_i
-  end
-
   def clean
     with_mesa_dir do
       visit_and_check mesa_dir, MesaDirError, 'E\countered a problem in ' \
                                 "running `clean` in #{mesa_dir}." do
-        puts 'MESA_DIR = ' + ENV['MESA_DIR']
-        puts './clean'
+        shell.say('MESA_DIR = ' + ENV['MESA_DIR'])
+        shell.say './clean'
         bash_execute('./clean')
       end
     end
@@ -784,8 +502,8 @@ class Mesa
     with_mesa_dir do
       visit_and_check mesa_dir, MesaDirError, 'Encountered a problem in ' \
                                 "running `install` in #{mesa_dir}." do
-        puts 'MESA_DIR = ' + ENV['MESA_DIR']
-        puts './install'
+        shell.say('MESA_DIR = ' + ENV['MESA_DIR'])
+        shell.say './install'
         bash_execute('./install')
       end
     end
@@ -797,14 +515,10 @@ class Mesa
   # throw an error unless it seems like it's properly compiled
   def check_installation
     unless installed?
-      raise MesaDirError, 'Installation check failed (no .mod files found ' \
-                          'in the last compiled module).'
+      raise MesaDirError, 'Installation check failed (build.log doesn\'t '\
+                          'show a successful installation).'
     end
   end    
-
-  def destroy
-    FileUtils.rm_rf mesa_dir
-  end
 
   ## TEST SUITE METHODS
 
@@ -842,7 +556,7 @@ class Mesa
       # read through each line and find four data, name, success string, final
       # model name, and photo. Either of model name and photo can be "skip"
       source_lines.each do |line|
-        no_skip = /^do_one (.+)\s+"([^"]*)"\s+"([^"]+)"\s+(x?\d+)/
+        no_skip = /^do_one (.+)\s+"([^"]*)"\s+"([^"]+)"\s+(x?\d+|auto)/
         one_skip = /^do_one (.+)\s+"([^"]*)"\s+"([^"]+)"\s+skip/
         two_skip = /^do_one (.+)\s+"([^"]*)"\s+skip\s+skip/
         found_test = false
@@ -932,34 +646,45 @@ class Mesa
   end
 
   def installed?
+    # assume build log reflects installation status; does not account for
+    # mucking with modules after the fact
+    File.read(File.join(mesa_dir, 'build.log')).include?(
+      'MESA installation was successful'
+    )
+
+    # OLD METHOD
+    # 
     # look for output files in the last-installed module
     # this isn't perfect, but it's a pretty good indicator of completing
     # installation
-    install_file = File.join(mesa_dir, 'install')
+    
+    # install_file = File.join(mesa_dir, 'install')
+    
     # match last line of things like "do_one SOME_MODULE" or "do_one_parallel 
     # SOME_MODULE", after which the "SOME_MODULE" will be stored in $1
     # that is the last module to be compiled by ./install.
-    IO.readlines(install_file).select do |line|
-      line =~ /^\s*do_one\w*\s+\w+/
-    end.last =~ /^\s*do_one\w*\s+(\w+)/
+    
+    # IO.readlines(install_file).select do |line|
+    #   line =~ /^\s*do_one\w*\s+\w+/
+    # end.last =~ /^\s*do_one\w*\s+(\w+)/
+    
     # module is "installed" if there is a nonzero number of files in the
     # module's make directory of the form SOMETHING.mod
-    !Dir.entries(File.join(mesa_dir, $1, 'make')).select do |file|
-      File.extname(file) == '.mod'
-    end.empty?
+
+    # !Dir.entries(File.join(mesa_dir, $1, 'make')).select do |file|
+    #   File.extname(file) == '.mod'
+    # end.empty?
   end
 
 
   private
 
-  # verify that mesa_dir is valid by checking for version number and test_suite
-  # directory
+  # verify that mesa_dir is valid by checking for existence of test_suite
+  # directory for each module (somewhat arbitrary)
   def check_mesa_dir
-    res = File.exist?(File.join(mesa_dir, 'data', 'version_number'))
-    MesaTestCase.modules.each do |mod|
-      res &&= File.directory?(test_suite_dir(mod: mod))
+    MesaTestCase.modules.inject(true) do |res, mod|
+      res && File.directory?(test_suite_dir(mod: mod))
     end
-    res
   end
 
   # change MESA_DIR for the execution of the block and then revert to the
@@ -1071,7 +796,7 @@ end
 class MesaTestCase
   attr_reader :test_name, :mesa_dir, :mesa, :success_string, :final_model,
               :failure_msg, :success_msg, :photo, :runtime_seconds,
-              :test_omp_num_threads, :mesa_version, :mesa_sha, :shell, :mod,
+              :test_omp_num_threads, :mesa_sha, :shell, :mod,
               :summary_text, :compiler, :compiler_version, :checksum, :rn_mem,
               :re_mem, :re_time, :total_runtime_seconds
   attr_accessor :data_names, :data_types, :failure_type, :success_type,
@@ -1128,8 +853,9 @@ class MesaTestCase
       photo_file: "#{test_name} restart failed: #{photo} does not exist",
       photo_checksum: "#{test_name} restart failed: checksum for " \
         "#{final_model} does not match after ./re",
+      photo_diff: "#{test_name} restart failed; checksum for #{final_model} "\
+        "does not match after ./re",
       compilation: "#{test_name} compilation failed"
-
     }
     @success_msg = {
       run_test_string: "#{test_name} run: found test string: " \
@@ -1150,10 +876,9 @@ class MesaTestCase
   end
 
   def passed?
-    if @outcome == :pass
-      true
-    elsif @outcome == :fail
-      false
+    case @outcome == :pass
+    when :pass then true
+    when :fail then false
     else
       raise TestCaseDirError, 'Cannot determine pass/fail status of ' \
       "#{test_name} yet."
@@ -1355,11 +1080,9 @@ class MesaTestCase
     raise TestCaseDirError, "No such test case: #{test_case_dir}."
   end
 
-  # verify that mesa_dir is valid by checking for version number and test_suite
-  # directory
+  # "verify" that mesa_dir is valid by checking for test_suite directory
   def check_mesa_dir
-    is_valid = File.exist?(File.join(mesa_dir, 'data', 'version_number')) &&
-               File.directory?(test_suite_dir)
+    is_valid =  File.directory?(test_suite_dir)
     raise MesaDirError, "Invalid MESA dir: #{mesa_dir}" unless is_valid
   end
 
@@ -1421,13 +1144,14 @@ class MesaTestCase
     run_start = Time.now
 
     # do the run
-    rn_command = if ENV['MESASDK_ROOT'] && File.exist?(File.join(ENV['MESASDK_ROOT'], 'bin', 'time'))
+    rn_command = if ENV['MESASDK_ROOT'] &&
+                    File.exist?(File.join(ENV['MESASDK_ROOT'], 'bin', 'time'))
                    %q(command time -f '%M' -o mem-rn.txt ./rn > out.txt 2> ) +
                      'err.txt'
                  else
                    './rn >> out.txt 2> err.txt'
                  end
-    puts rn_command
+    shell.say rn_command
     bash_execute(rn_command)
 
     # report runtime and clean up
@@ -1450,14 +1174,17 @@ class MesaTestCase
     return succeed(:run_test_string) unless final_model
 
     # display runtime message
-    puts IO.readlines('out.txt').select { |line| line.scan(/runtime/i) }[-1]
+    shell.say File.read('out.txt').split("\n").select { |line|
+      line =~ /^\s*runtime/i
+    }.join("\n")
 
     # there's supposed to be a final model; check that it exists first
     return fail_test(:final_model) unless File.exist?(final_model)
 
     # update checksums
-    puts "md5sum \"#{final_model}\" > checks.md5"
-    bash_execute("md5sum \"#{final_model}\" > checks.md5")
+    command = "md5sum \"#{final_model}\" > checks.md5"
+    shell.say(command)
+    bash_execute(command)
 
     # if there's no photo, we won't check the checksum, so we've succeeded
     return succeed(:run_test_string) unless photo
@@ -1472,42 +1199,59 @@ class MesaTestCase
     # abort if there is not photo specified
     return unless photo
 
+
+    # get penultimate photo
+    if photo == "auto" then
+     # get all photos [single-star (x100) or binary (b_x100); exclude binary stars (1_x100, 2_x100)]
+     photo_files = Dir["photos/*"].select{|p| p =~ /^photos\/(b_)?x?\d+$/}
+     # pull out 2nd most recent one
+     re_photo = File.basename(photo_files.sort_by { |file_name| File.stat(file_name).mtime } [-2])
+     # if binary, trim off prefix
+     re_photo.delete_prefix!("b_")
+    else
+     re_photo = photo
+    end
+
     # check that photo file actually exists
-    unless File.exist?(File.join('photos', photo)) ||
-           File.exist?(File.join('photos1', photo)) ||
-           File.exist?(File.join('photos', "b_#{photo}"))
+    unless File.exist?(File.join('photos', re_photo)) ||
+           File.exist?(File.join('photos1', re_photo)) ||
+           File.exist?(File.join('photos', "b_#{re_photo}"))
       return fail_test(:photo_file)
     end
 
     # remove final model since it will be remade by restart
     FileUtils.rm_f final_model
 
+    # time restart
+    re_start = Time.now
     # do restart and consolidate output. Command depends on if we have access
     # to SDK version of gnu time.
     re_command = if ENV['MESASDK_ROOT'] && File.exist?(File.join(ENV['MESASDK_ROOT'], 'bin', 'time'))
-                   %q(command time -f '%M' -o mem-re.txt ./re ) + "#{photo}" \
+                   %q(command time -f '%M' -o mem-re.txt ./re ) + "#{re_photo}" \
                      ' >> out.txt 2> err.txt'
                  else
-                   "./re #{photo} >> out.txt 2> err.txt"
+                   "./re #{re_photo} >> out.txt 2> err.txt"
                  end
-
-    puts re_command
-    # puts "./re #{photo} >> out.txt 2> err.txt"
-    re_start = Time.now
-    # bash_execute("./re #{photo} >> out.txt 2> err.txt")
-    # bash_execute(%Q{command time -f '%M' -o mem-re.txt ./re #{photo} >> out.txt 2> err.txt})
+    shell.say re_command
     bash_execute(re_command)
     re_finish = Time.now
     @re_time = (re_finish - re_start).to_i
     append_and_rm_err
 
     # check that final model matches
-    puts './ck >& final_check_diff.txt'
-    return fail_test(:photo_checksum) unless
-      bash_execute('./ck >& final_check_diff.txt')
-    return fail_test(:photo_diff) if
-      File.exist?('final_check_diff.txt') &&
-      !File.read('final_check_diff.txt').empty?
+    command = './ck >& final_check_diff.txt'
+    shell.say command
+    # fail if checksum production fails
+    return fail_test(:photo_checksum) unless bash_execute(command)
+
+    # fail if checksum from restart doesn't match that from original run
+    if File.exist?('final_check_diff.txt') && 
+       !File.read('final_check_diff.txt').empty? 
+      return fail_test(:photo_diff) 
+    end
+
+    # we got through everything and the checksums match! Strongest possible
+    # success
     succeed(:photo_checksum)
   end
 
@@ -1545,7 +1289,7 @@ class MesaTestCase
   def display_errors(err_contents)
     return if err_contents.strip.empty?
     shell.say("\nERRORS", :red)
-    puts err_contents
+    shell.say err_contents
     shell.say('END OF ERRORS', :red)
   end
 
@@ -1556,14 +1300,14 @@ class MesaTestCase
   end
 
   def simple_clean
-    puts './clean'
+    shell.say './clean'
     return if bash_execute('./clean')
     raise TestCaseDirError, 'Encountered an error when running `clean` in ' \
       "#{Dir.getwd} for test case #{test_name}."
   end
 
   def mk
-    puts './mk > mk.txt'
+    shell.say './mk > mk.txt'
     unless bash_execute('./mk > mk.txt')
       raise TestCaseDirError, 'Encountered an error when running `mk` in ' \
         "#{Dir.getwd} for test case #{test_name}."
@@ -1582,55 +1326,10 @@ class MesaTestCase
     File.join(test_case_dir, 'out.txt')
   end
 
-  # helpers for getting run summaries
-  def run_summaries
-    # look at all lines in out.txt
-    lines = IO.readlines(out_file)
-
-    # find lines with summary information
-    summary_line_numbers = []
-    lines.each_with_index do |line, i|
-      if line =~ /^\s*runtime \(minutes\),\s+retries,\s+backups,\ssteps/
-        summary_line_numbers << i
-      end
-    end
-
-    # find lines indicating passage or failure of runs and restarts
-    run_finish_line_numbers = []
-    restart_finish_line_numbers = []
-    lines.each_with_index do |line, i|
-      if line =~ /^\s*((?:PASS)|(?:FAIL))\s+#{test_name}\s+restart/
-        restart_finish_line_numbers << i
-      elsif line =~ /^\s*((?:PASS)|(?:FAIL))\s+#{test_name}\s+run/
-        run_finish_line_numbers << i
-      end
-    end
-
-    # only keep summaries that correspond to runs rather than restart
-    summary_line_numbers.select do |i|
-      run_summary?(i, run_finish_line_numbers, restart_finish_line_numbers)
-    end.map { |line_number| lines[line_number] }
-  end
-
   def get_summary_text
     IO.readlines(out_file).select do |line|
       line =~ /^\s*runtime/ 
     end.join
-  end
-
-  def run_summary?(i, run_finish_line_numbers, restart_finish_line_numbers)
-    # iterate from starting line (a summary line) up to largest PASS/FAIL
-    # line, bail out if summary line is beyond any PASS/FAIL line
-    max_line = run_finish_line_numbers.max || 0
-    max_line = [max_line, (restart_finish_line_numbers.max || 0)].max
-    return false if i > max_line
-    # return true if next PASS/FAIL line is for a run and fail if it is for a
-    # restart
-    i.upto(max_line) do |j|
-      return true if run_finish_line_numbers.include?(j)
-      return false if restart_finish_line_numbers.include?(j)
-    end
-    false
   end
 
 end
@@ -1645,13 +1344,11 @@ end
 def visit_and_check(new_dir, exception, message)
   cwd = Dir.getwd
   shell.say "Leaving  #{cwd}", :blue
-  puts ''
-  shell.say "Entering #{new_dir}.", :blue
+  shell.say "\nEntering #{new_dir}.", :blue
   Dir.chdir(new_dir)
   success = yield if block_given?
   shell.say "Leaving  #{new_dir}", :blue
-  puts ''
-  shell.say "Entering #{cwd}.", :blue
+  shell.say "\nEntering #{cwd}.", :blue
   Dir.chdir(cwd)
   return if success
   raise exception, message
@@ -1662,15 +1359,15 @@ end
 def visit_dir(new_dir)
   cwd = Dir.getwd
   shell.say "Leaving  #{cwd}\n", :blue
-  shell.say "Entering #{new_dir}.", :blue
+  shell.say "\nEntering #{new_dir}.", :blue
   Dir.chdir(new_dir)
   yield if block_given?
   shell.say "Leaving  #{new_dir}\n", :blue
-  shell.say "Re-entering #{cwd}.", :blue
-  puts ""
+  shell.say "\nRe-entering #{cwd}.", :blue
   Dir.chdir(cwd)
 end
 
+# the next function probalby doesn't belong here, but keep it anyway, please
 # create seed data for test cases for MesaTestHub of a given mesa version
 def generate_seeds_rb(mesa_dir, outfile)
   m = Mesa.new(mesa_dir: mesa_dir)

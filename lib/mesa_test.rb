@@ -803,7 +803,7 @@ class MesaTestCase
                 :outcome
 
   def self.modules
-    %i[star binary]
+    %i[star binary astero]
   end
 
   def initialize(test: nil, mesa: nil, success_string: '',

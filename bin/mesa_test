@@ -46,8 +46,12 @@ class MesaTest < Thor
                      type: :boolean, default: true
 
   def test(test_case_name=nil)
-    s = create_and_check_submitter(force: options[:force]) if options[:submit]
-    m = create_and_check_mesa(mesa_dir: s.mesa_work, 
+    s = if options[:submit]
+          create_and_check_submitter(force: options[:force]) 
+        else
+          create_submitter(force: options[:force])
+        end
+    m = create_and_check_mesa(mesa_dir: s.mesa_work, mirror_dir: s.mesa_mirror,
                               mod: options[:module].downcase.to_sym,
                               using_sdk: using_sdk?(s))
     if test_case_name
@@ -103,7 +107,7 @@ class MesaTest < Thor
   
   def submit(test_case_name=nil)
     s = create_and_check_submitter(force: options[:force])
-    m = create_and_check_mesa(mesa_dir: s.mesa_work,
+    m = create_and_check_mesa(mesa_dir: s.mesa_work, mirror_dir: s.mesa_mirror,
                               mod: options[:module].downcase.to_sym,
                               using_sdk: using_sdk?(s))
     empty = options[:empty]
@@ -144,7 +148,24 @@ class MesaTest < Thor
     end
   end
 
-  desc 'install SHA MESA_DIR', 'checkout and install a commit'
+  desc 'checkout SHA', 'checkout a commit'
+  long_desc <<-LONGDESC
+  Checks out a particular commit to default mesa directory (mesa_work in 
+  .mesa_test.yml). Uses git worktree magic to avoid re-downloading all of mesa
+  history if a mirror repo is already set up. Does not affect the user's
+  MESA_DIR or other environment variables.
+  LONGDESC
+  def checkout(sha)
+    # assuming config wizard has already been set (perhaps a little reckless)
+    # so that we can get at the work directory and mirror directory
+    s = create_submitter(force: true)
+    shell.say s.mesa_work
+    shell.say s.mesa_mirror
+    Mesa.checkout(sha: sha, work_dir: s.mesa_work, mirror_dir: s.mesa_mirror)
+  end
+
+
+  desc 'install SHA', 'checkout and install a commit'
   long_desc <<-LONGDESC
   Checks out a particular commit to default mesa directory (mesa_work in 
   .mesa_test.yml). Equivalent to a git checkout followed by going into
@@ -266,16 +287,19 @@ class MesaTest < Thor
     unless force
       s.setup unless s.confirm_computer_data
     end
+    s
   end
 
   def create_and_check_submitter(force: true)
-    s create_submitter(force: force)
+    s = create_submitter(force: force)
     check_user_and_computer s
     s
   end
 
-  def create_and_check_mesa(mesa_dir:, mod: :all, using_sdk: true)
-    m = Mesa.new(mesa_dir: mesa_dir, using_sdk: using_sdk)
+  def create_and_check_mesa(mesa_dir: '', mirror_dir: '', mod: :all,
+                            using_sdk: true, use_svn: false)
+    m = Mesa.new(mesa_dir: mesa_dir, mirror_dir: mirror_dir, 
+      using_sdk: using_sdk, use_svn: use_svn)
     check_mesa(m)
     update_mesa(mesa: m, mod: mod)
   end

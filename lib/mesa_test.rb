@@ -50,21 +50,21 @@ e-mail and password will be stored in plain text.'
       response = shell.ask "Where is/should your mirrored MESA repository " \
       "located? This is where a mirror will be stored from which test " \
       "repos will be generated. You won't touch this in regular operation. " \
-      "#(#{s.mesa_mirror}):", :blue
+      "(#{s.mesa_mirror}):", :blue
       s.mesa_mirror = response unless response.empty?
 
       # Get location of source MESA work (where testing happens)
       response = shell.ask "Where is/should your working directory for "\
       "testing be located? This is where testing actually occurs, but all "\
       "files it uses are cached in the mirror repo to save time later. " \
-      "#(#{s.mesa_work}):", :blue
+      "(#{s.mesa_work}):", :blue
       s.mesa_work = response unless response.empty?
 
       # Get platform information
       response = shell.ask 'What is the platform of this computer (eg. ' \
         "macOS, Ubuntu)? (#{s.platform}):", :blue
       s.platform = response unless response.empty?
-      response = shell.ask 'What is the version of the platform (eg. 10.13, ' \
+      response = shell.ask 'What is the version of the platform (eg. 10.15.5, ' \
         "Ubuntu 16.04)? (#{s.platform_version}):", :blue
       s.platform_version = response unless response.empty?
 
@@ -75,7 +75,7 @@ e-mail and password will be stored in plain text.'
 
       # Get compiler version
       response = shell.ask 'What version of the compiler (eg. 20170921 or ' \
-        "7.2.0)? (#{s.compiler_version}): ", :blue
+        "7.2.0)? (#{s.compiler_version}):", :blue
       s.compiler_version = response unless response.empty?
 
       # Confirm save location
@@ -129,9 +129,9 @@ e-mail and password will be stored in plain text.'
     @email = email || ''
     @password = password || ''
     @mesa_mirror = mesa_mirror ||
-      File.join(ENV['HOME'], '.mesa_test', 'mesa_mirror')
+      File.join(ENV['HOME'], '.mesa_test', 'mesa_test_mirror')
     @mesa_work = mesa_work ||
-      File.join(ENV['HOME'], '.mesa_test', 'mesa_work')
+      File.join(ENV['HOME'], '.mesa_test', 'mesa_test_work')
     @platform = platform
     if @platform.nil?
       @platform =
@@ -148,22 +148,16 @@ e-mail and password will be stored in plain text.'
     @ram_gb = ram_gb || 0
     @compiler = compiler || 'SDK'
     @compiler_version = compiler_version || ''
-    @config_file = config_file || File.join(ENV['HOME'], '.mesa_test.yml')
+    @config_file = config_file || File.join(ENV['HOME'], '.mesa_test',
+                                            'config.yml')
     @base_uri = base_uri
     @last_tested = last_tested || DEFAULT_REVISION
-
-    # set up mirror if it doesn't exist
-    unless File.exist?(File.join(mesa_mirror, '.git'))
-      shell.say "Creating initial mirror at #{mesa_mirror}. This may take "\
-        "awhile, but it will only happen once.", :blue
-      bash_execute('git clone --mirror git@github.com:MESAHub/mesa-sandbox-'\
-        "lfs.git #{mesa_mirror}")
-    end
 
     # set up thor-proof way to get responses from user. Thor hijacks the
     # gets command, so we have to use its built-in "ask" method, which is
     # actually more useful
     @shell = Thor::Shell::Color.new
+
     yield self if block_given?
   end
 
@@ -179,6 +173,7 @@ e-mail and password will be stored in plain text.'
     puts "User email              #{email}"
     puts 'Password                ***********'
     puts "MESA Mirror Location    #{mesa_mirror}"
+    puts "MESA Work Location      #{mesa_work}"
     puts "Platform                #{platform} #{platform_version}"
     puts "Compiler                #{compiler} #{compiler_version}"
     puts "Config location         #{config_file}"
@@ -208,6 +203,7 @@ e-mail and password will be stored in plain text.'
       'email' => email,
       'password' => password,
       'mesa_mirror' => mesa_mirror,
+      'mesa_work' => mesa_work,
       'platform' => platform,
       'platform_version' => platform_version,
       'compiler' => compiler,
@@ -222,6 +218,7 @@ e-mail and password will be stored in plain text.'
     @email = data_hash['email']
     @password = data_hash['password']
     @mesa_mirror = data_hash['mesa_mirror']
+    @mesa_work = data_hash['mesa_work']
     @platform = data_hash['platform']
     @platform_version = data_hash['platform_version']
     @compiler = data_hash['compiler']
@@ -627,8 +624,8 @@ end
 class Mesa
   SVN_URI = 'https://subversion.assembla.com/svn/mesa\^mesa/trunk'.freeze    
 
-  attr_reader :mesa_dir, :test_data, :test_names, :test_cases, :shell,
-              :svn_version, :svn_author, :svn_log, :using_sdk
+  attr_reader :mesa_dir, :mirror_dir, :test_data, :test_names, :test_cases, 
+              :shell, :svn_version, :svn_author, :svn_log, :using_sdk
   attr_accessor :update_checksums
 
   def self.download(version_number: nil, new_mesa_dir: nil, use_svn: true,
@@ -647,18 +644,19 @@ class Mesa
   end
 
   def self.checkout(sha: nil, work_dir: nil, mirror_dir: nil, using_sdk: true)
-    bash_execute("git -C #{mirror_dir} worktree add #{work_dir} #{sha}")
-    Mesa.new(mesa_dir: work_dir, using_sdk: using_sdk, use_svn: false)
+    m = Mesa.new(mesa_dir: work_dir, mirror_dir: mirror_dir,
+                 using_sdk: using_sdk, use_svn: false)
+    m.checkout(sha: sha)
+    m
   end
 
-  def sha
-    bashticks("git -C #{mesa_dir} rev-parse HEAD")
-  end
-
-  def initialize(mesa_dir: ENV['MESA_DIR'], use_svn: true, using_sdk: true)
+  def initialize(mesa_dir: ENV['MESA_DIR'], mirror_dir: nil,
+                 use_svn: true, using_sdk: true)
     # absolute_path ensures that it doesn't matter where commands are executed
     # from
     @mesa_dir = File.absolute_path(mesa_dir)
+    puts @mesa_dir
+    @mirror_dir = File.absolute_path(mirror_dir)
     @use_svn = use_svn
     @using_sdk = using_sdk
     @update_checksums = false
@@ -679,34 +677,83 @@ class Mesa
     load_svn_data if use_svn?
   end
 
+  def checkout(sha: 'HEAD')
+    # set up mirror if it doesn't exist
+    unless File.exist?(File.join(mirror_dir, '.git'))
+      shell.say "\nCreating initial mirror at #{mirror_dir}. "\
+                'This might take awhile...', :blue
+      command = 'git clone --mirror https://github.com/MESAHub/mesa-sandbox'\
+                "-lfs.git #{mirror_dir}"
+      shell.say command
+      bash_execute(command)
+    end
+
+    update_mirror
+
+    # ensure "work" directory is removed from worktree
+    remove
+
+    # create "work" directory with proper commit
+    shell.say "\nAdding work directory to worktree...", :blue
+    command = "git -C #{mirror_dir} worktree add #{mesa_dir} #{sha}"
+    shell.say command
+    bash_execute(command)
+  end
+
+  def update_mirror
+    shell.say "\nFetching MESA history...", :blue
+    command = "git -C #{mirror_dir} fetch origin"
+    shell.say command
+    bash_execute(command)
+  end
+
+  def remove
+    return unless File.exist? mesa_dir
+    shell.say "\nRemoving work directory from worktree (clearing old data)...",
+              :blue
+    command = "git -C #{mirror_dir} worktree remove --force #{mesa_dir}"
+    shell.say command
+    unless bash_execute(command)
+      shell.say "Failed. Simply trying to remove the directory.", :red
+      command = "rm -rf #{mesa_dir}"
+      shell.say command
+      bash_execute(command)
+    end
+  end
+
+  def sha
+    bashticks("git -C #{mesa_dir} rev-parse HEAD")
+  end
+
+
   def use_svn?
     @use_svn
   end
 
-  def determine_diff
-    # automatically determine if update_checksums should be true (don't do
-    # diffs or true (DO do diffs). Only works if svn data has ALREADY been
-    # loaded
+  # def determine_diff
+  #   # automatically determine if update_checksums should be true (don't do
+  #   # diffs or true (DO do diffs). Only works if svn data has ALREADY been
+  #   # loaded
 
-    # don't do anything to @update_checksums if we haven't loaded svn data
-    return unless @svn_log
+  #   # don't do anything to @update_checksums if we haven't loaded svn data
+  #   return unless @svn_log
 
-    # by default, DON'T do diffs
-    @update_checksums = true
+  #   # by default, DON'T do diffs
+  #   @update_checksums = true
 
-    # list of phrases, which, if present in the log entry, will trigger diffs
-    [
-      /updated? checksums?/i,
-      /checksums? updated?/i,
-      /ready for diffs?/i,
-    ].each { |trigger| @update_checksums = false if trigger =~ @svn_log }
-    if @update_checksums
-      shell.say "\nFrom svn log, didn't decide to tak diffs."
-    else
-      shell.say "From svn log, automatically decided to take diffs." 
-    end
-    shell.say "log entry: #{@svn_log}"
-  end
+  #   # list of phrases, which, if present in the log entry, will trigger diffs
+  #   [
+  #     /updated? checksums?/i,
+  #     /checksums? updated?/i,
+  #     /ready for diffs?/i,
+  #   ].each { |trigger| @update_checksums = false if trigger =~ @svn_log }
+  #   if @update_checksums
+  #     shell.say "\nFrom svn log, didn't decide to tak diffs."
+  #   else
+  #     shell.say "From svn log, automatically decided to take diffs." 
+  #   end
+  #   shell.say "log entry: #{@svn_log}"
+  # end
 
   def version_number
     version = @svn_version || 0
@@ -1054,9 +1101,9 @@ end
 class MesaTestCase
   attr_reader :test_name, :mesa_dir, :mesa, :success_string, :final_model,
               :failure_msg, :success_msg, :photo, :runtime_seconds,
-              :test_omp_num_threads, :mesa_version, :shell, :mod, :retries,
-              :backups, :steps, :runtime_minutes, :summary_text, :compiler,
-              :compiler_version, :diff, :checksum, :rn_mem, :re_mem,
+              :test_omp_num_threads, :mesa_version, :mesa_sha, :shell, :mod,
+              :retries, :backups, :steps, :runtime_minutes, :summary_text,
+              :compiler, :compiler_version, :diff, :checksum, :rn_mem, :re_mem,
               :re_time, :total_runtime_seconds
   attr_accessor :data_names, :data_types, :failure_type, :success_type,
                 :outcome
@@ -1071,6 +1118,7 @@ class MesaTestCase
     @mesa_dir = mesa.mesa_dir
     @mesa = mesa
     @mesa_version = mesa.version_number
+    @mesa_sha = mesa.sha
     @success_string = success_string
     @final_model = final_model
     @photo = photo
@@ -1084,7 +1132,7 @@ class MesaTestCase
     @retries = 0
     @backups = 0
     @steps = 0
-    # 2 (default) means uknown. Updated by running or loading data.
+    # 2 (default) means unknown. Updated by running or loading data.
     # 1 means did diffs (not update_checksums; like each_test_run_and_diff)
     # 0 means no diffs (update_checksums; like each_test_run)
     @diff = 2
@@ -1271,6 +1319,7 @@ class MesaTestCase
       're_time' => re_time,
       'total_runtime_seconds' => total_runtime_seconds,
       'mesa_version' => mesa_version,
+      'mesa_sha' => mesa_sha,
       'outcome' => outcome,
       'omp_num_threads' => test_omp_num_threads,
       'success_type' => success_type,
@@ -1308,6 +1357,7 @@ class MesaTestCase
     @total_runtime_seconds = data['total_runtime_seconds'] || @total_runtime_seconds
     @mod = data['module'] || @mod
     @mesa_version = data['mesa_version'] || @mesa_version
+    @mesa_sha = data['mesa_sha'] || @mesa_sha
     @outcome = data['outcome'] || @outcome
     @test_omp_num_threads = data['omp_num_threads'] || @test_omp_num_threads
     @success_type = data['success_type'] || @success_type

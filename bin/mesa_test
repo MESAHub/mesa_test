@@ -16,14 +16,14 @@ require 'yaml'
 class MesaTest < Thor
   DEVELOPMENT_URI = 'http://localhost:3000'.freeze
 
-  desc 'test MESA_DIR [TEST CASE]', 'run and submit a test case or commit'
+  desc 'test [TEST CASE]', 'run and submit a test case or commit'
   long_desc <<-LONGDESC
-    You must specify at least a mesa directory, which is a functioning git
-    repository. If you specify an optional test case, only that test case
-    will be tested. TEST_CASE can also be an integer corresponding to the
-    position it has in do1_test_source (or a concatenated version of that file
-    if no module is specified). Modules are searched/concatenated in this
-    order:
+    If you specify an optional test case, only that test case
+    will be tested. Otherwise all test cases in your work directory (set up in
+    your .mesa_test.yml file). TEST_CASE can also be an integer corresponding
+    to the position it has in do1_test_source (or a concatenated version of
+    that file if no module is specified). Modules are searched/concatenated in
+    this order:
 
     #{MesaTestCase.modules.map { |mod| '    ' + mod.to_s }.join(', ')}
   LONGDESC
@@ -45,9 +45,9 @@ class MesaTest < Thor
                      'determine SDK version. Ignored unless using --set-sdk).',
                      type: :boolean, default: true
 
-  def test(mesa_dir, test_case_name=nil)
+  def test(test_case_name=nil)
     s = create_and_check_submitter(force: options[:force]) if options[:submit]
-    m = create_and_check_mesa(mesa_dir: mesa_dir, 
+    m = create_and_check_mesa(mesa_dir: s.mesa_work, 
                               mod: options[:module].downcase.to_sym,
                               using_sdk: using_sdk?(s))
     if test_case_name
@@ -78,10 +78,10 @@ class MesaTest < Thor
     end
   end
 
-  desc 'submit MESA_DIR [TEST CASE]', 'submit a test case or commit'
+  desc 'submit [TEST CASE]', 'submit a test case or commit'
   long_desc <<-LONGDESC
-    You must specify at least a mesa directory, which is a functioning git
-    repository. If you specify an optional test case, only that test case
+    All tests are assumed to be in the default mesa directory (set as mesa_work
+    in .mesa_test.yml. If you specify an optional test case, only that test case
     will be submitted. TEST_CASE can also be an integer corresponding to the
     position it has in do1_test_source (or a concatenated version of that file
     if no module is specified). Modules are searched/concatenated in this
@@ -101,9 +101,9 @@ class MesaTest < Thor
                        'single test submissions.', 
                  type: :boolean, default: false, aliases: '-e'
   
-  def submit(mesa_dir, test_case_name=nil)
+  def submit(test_case_name=nil)
     s = create_and_check_submitter(force: options[:force])
-    m = create_and_check_mesa(mesa_dir: mesa_dir,
+    m = create_and_check_mesa(mesa_dir: s.mesa_work,
                               mod: options[:module].downcase.to_sym,
                               using_sdk: using_sdk?(s))
     empty = options[:empty]
@@ -146,33 +146,38 @@ class MesaTest < Thor
 
   desc 'install SHA MESA_DIR', 'checkout and install a commit'
   long_desc <<-LONGDESC
-  Checks out a particular commit to an existing MESA repository clone and
-  installs it MESA_DIR. Basically just a git checkout followed by going into
-  the directory and running ./clean and ./install. SDK or compilers must be set
-  up prior. Does not affect the user's MESA_DIR or other environment variables.
+  Checks out a particular commit to default mesa directory (mesa_work in 
+  .mesa_test.yml). Equivalent to a git checkout followed by going into
+  the directory and running ./clean and ./install, but there is some git
+  worktree magic on the backend to improve efficiency. SDK or compilers must be
+  set up prior. Does not affect the user's MESA_DIR or other environment
+  variables.
   LONGDESC
-  def install(sha, mesa_dir)
-    m = Mesa.checkout(sha: sha, mesa_dir: mesa_dir)
+  def install(sha)
+    # assuming config wizard has already been set (perhaps a little reckless)
+    # so that we can get at the work directory and mirror directory
+    s = create_submitter(force: true)
+    m = Mesa.checkout(sha: sha, work_dir: s.mesa_work,
+                      mirror_dir: s.mesa_mirror)
     m.clean
     m.install
   end
 
-  desc 'install_and_test SHA MESA_DIR', 'Install, test, and submit an entire '\
-  'MESA commit.'
+  desc 'install_and_test SHA', 'Install, test, and submit an entire commit.'
   long_desc <<-LONGDESC
-  Checks out a particular commit (specified by SHA) in an existing mesa git
-  repository located at MESA_DIR. Then go into the directory
+  Checks out a particular commit (specified by SHA) to the default mesa
+  directory (mesa_work in .mesa_test.yml). Then go into the directory
   and run ./clean and ./install. SDK or compilers must be set up prior.
   Once installation is complete, run the test suite, and report results
   (commit and all test data) to MesaTestHub in a single request.
   Does not affect the user's MESA_DIR or other environment variables. This is
   basically a shortcut for running
 
-    `mesa_test install SOME_SHA SOME_DIR`
+    `mesa_test install SOME_SHA`
 
   followed by
 
-    `mesa_test test SOME_DIR`
+    `mesa_test test`
   LONGDESC
 
   option :force, desc: 'When submitting, assume submission data in ' +
@@ -194,10 +199,16 @@ class MesaTest < Thor
   option :log, type: :boolean, default: true, desc: 'Save yml file of test ' \
                'results in test case directory.'
 
-  def install_and_test(sha, mesa_dir)
-    s = nil # to make sure using_sdk? below will work properly
-    s = create_and_check_submitter(force: options[:force]) if options[:submit]
-    m = Mesa.checkout(sha: sha, mesa_dir: mesa_dir, using_sdk: using_sdk?(s))
+  def install_and_test(sha)
+    s = if options[:submit]
+          create_and_check_submitter(force: options[:force])
+        else
+          # not submitting? don't check config file (risky!) still need
+          # submitter to get work and mirror directories, though
+          create_submitter(force: true)
+        end
+    m = Mesa.checkout(sha: sha, work_dir: s.mesa_work,
+                      mirror_dir: s.mesa_mirror, using_sdk: using_sdk?(s))
     begin
       m.clean
       m.install
@@ -246,7 +257,7 @@ class MesaTest < Thor
     end
   end
 
-  def create_and_check_submitter(force: true)
+  def create_submitter(force: true)
     s = if DEVELOPMENT_MODE
           MesaTestSubmitter.new_from_config(base_uri: DEVELOPMENT_URI)
         else
@@ -255,6 +266,10 @@ class MesaTest < Thor
     unless force
       s.setup unless s.confirm_computer_data
     end
+  end
+
+  def create_and_check_submitter(force: true)
+    s create_submitter(force: force)
     check_user_and_computer s
     s
   end

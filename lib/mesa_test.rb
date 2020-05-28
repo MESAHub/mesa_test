@@ -249,7 +249,6 @@ e-mail and password will be stored in plain text.'
       steps: test_case.steps,
       retries: test_case.retries,
       backups: test_case.backups,
-      diff: test_case.diff,
       checksum: test_case.checksum,
       rn_mem: test_case.rn_mem,
       re_mem: test_case.re_mem,
@@ -311,7 +310,6 @@ e-mail and password will be stored in plain text.'
               steps: test_case.steps,
               retries: test_case.retries,
               backups: test_case.backups,
-              diff: test_case.diff,
               checksum: test_case.checksum,
               rn_mem: test_case.rn_mem,
               re_mem: test_case.re_mem,
@@ -626,7 +624,6 @@ class Mesa
 
   attr_reader :mesa_dir, :mirror_dir, :test_data, :test_names, :test_cases, 
               :shell, :svn_version, :svn_author, :svn_log, :using_sdk
-  attr_accessor :update_checksums
 
   def self.download(version_number: nil, new_mesa_dir: nil, use_svn: true,
     using_sdk: true)
@@ -659,7 +656,6 @@ class Mesa
     @mirror_dir = File.absolute_path(mirror_dir)
     @use_svn = use_svn
     @using_sdk = using_sdk
-    @update_checksums = false
 
     # these get populated by calling #load_test_data
     @test_data = {}
@@ -725,35 +721,9 @@ class Mesa
     bashticks("git -C #{mesa_dir} rev-parse HEAD")
   end
 
-
   def use_svn?
     @use_svn
   end
-
-  # def determine_diff
-  #   # automatically determine if update_checksums should be true (don't do
-  #   # diffs or true (DO do diffs). Only works if svn data has ALREADY been
-  #   # loaded
-
-  #   # don't do anything to @update_checksums if we haven't loaded svn data
-  #   return unless @svn_log
-
-  #   # by default, DON'T do diffs
-  #   @update_checksums = true
-
-  #   # list of phrases, which, if present in the log entry, will trigger diffs
-  #   [
-  #     /updated? checksums?/i,
-  #     /checksums? updated?/i,
-  #     /ready for diffs?/i,
-  #   ].each { |trigger| @update_checksums = false if trigger =~ @svn_log }
-  #   if @update_checksums
-  #     shell.say "\nFrom svn log, didn't decide to tak diffs."
-  #   else
-  #     shell.say "From svn log, automatically decided to take diffs." 
-  #   end
-  #   shell.say "log entry: #{@svn_log}"
-  # end
 
   def version_number
     version = @svn_version || 0
@@ -1102,9 +1072,8 @@ class MesaTestCase
   attr_reader :test_name, :mesa_dir, :mesa, :success_string, :final_model,
               :failure_msg, :success_msg, :photo, :runtime_seconds,
               :test_omp_num_threads, :mesa_version, :mesa_sha, :shell, :mod,
-              :retries, :backups, :steps, :runtime_minutes, :summary_text,
-              :compiler, :compiler_version, :diff, :checksum, :rn_mem, :re_mem,
-              :re_time, :total_runtime_seconds
+              :summary_text, :compiler, :compiler_version, :checksum, :rn_mem,
+              :re_mem, :re_time, :total_runtime_seconds
   attr_accessor :data_names, :data_types, :failure_type, :success_type,
                 :outcome
 
@@ -1127,15 +1096,8 @@ class MesaTestCase
     @outcome = :not_tested
     @runtime_seconds = 0
     @test_omp_num_threads = 1
-    @runtime_minutes = 0
     @total_runtime_seconds = 0
-    @retries = 0
-    @backups = 0
-    @steps = 0
-    # 2 (default) means unknown. Updated by running or loading data.
-    # 1 means did diffs (not update_checksums; like each_test_run_and_diff)
-    # 0 means no diffs (update_checksums; like each_test_run)
-    @diff = 2
+
     # start with nil. Should only be updated to a non-nil value if test is
     # completely successful
     @checksum = nil
@@ -1163,23 +1125,15 @@ class MesaTestCase
       run_test_string: "#{test_name} run failed: does not match test string",
       final_model: "#{test_name} run failed: final model #{final_model} not " \
         'made.',
-      run_checksum: "#{test_name} run failed: checksum for #{final_model} " \
-        'does not match after ./rn',
-      run_diff: "#{test_name} run failed: diff #{final_model} " \
-        'final_check.mod after ./rn',
       photo_file: "#{test_name} restart failed: #{photo} does not exist",
       photo_checksum: "#{test_name} restart failed: checksum for " \
         "#{final_model} does not match after ./re",
-      photo_diff: "#{test_name} restart failed: diff #{final_model} " \
-        'final_check.mod after ./re',
       compilation: "#{test_name} compilation failed"
 
     }
     @success_msg = {
       run_test_string: "#{test_name} run: found test string: " \
         "'#{success_string}'",
-      run_checksum: "#{test_name} run: checksum for #{final_model} matches " \
-        'after ./rn',
       photo_checksum: "#{test_name} restart: checksum for #{final_model} " \
         "matches after ./re #{photo}"
     }
@@ -1318,17 +1272,10 @@ class MesaTestCase
       'runtime_seconds' => runtime_seconds,
       're_time' => re_time,
       'total_runtime_seconds' => total_runtime_seconds,
-      'mesa_version' => mesa_version,
-      'mesa_sha' => mesa_sha,
       'outcome' => outcome,
       'omp_num_threads' => test_omp_num_threads,
       'success_type' => success_type,
       'failure_type' => failure_type,
-      'runtime_minutes' => runtime_minutes,
-      'retries' => retries,
-      'backups' => backups,
-      'steps' => steps,
-      'diff' => diff,
       'checksum' => checksum,
       'rn_mem' => rn_mem,
       're_mem' => re_mem,
@@ -1356,17 +1303,10 @@ class MesaTestCase
     @re_time = data['re_time'] || @re_time
     @total_runtime_seconds = data['total_runtime_seconds'] || @total_runtime_seconds
     @mod = data['module'] || @mod
-    @mesa_version = data['mesa_version'] || @mesa_version
-    @mesa_sha = data['mesa_sha'] || @mesa_sha
     @outcome = data['outcome'] || @outcome
     @test_omp_num_threads = data['omp_num_threads'] || @test_omp_num_threads
     @success_type = data['success_type'] || @success_type
     @failure_type = data['failure_type'] || @failure_type
-    @runtime_minutes = data['runtime_minutes'] || @runtime_minutes
-    @retries = data['retries'] || @retries
-    @backups = data['backups'] || @backups
-    @steps = data['steps'] || @steps
-    @diff = data['diff'] || @diff
     @checksum = data['checksum'] || @checksum
     @rn_mem = data['rn_mem'] || @rn_mem
     @re_mem = data['re_mem'] || @re_mem
@@ -1385,33 +1325,11 @@ class MesaTestCase
 
   def load_summary_data
     begin
-      out_data = parse_out
       @summary_text = get_summary_text
     rescue Errno::ENOENT
       shell.say "\nError loading data from #{out_file}. No summary data "\
                 'loaded. Proceeding anyway.', :red
-    else
-      @runtime_minutes = out_data[:runtime_minutes]
-      @retries = out_data[:retries]
-      @backups = out_data[:backups]
-      @steps = out_data[:steps]
     end
-  end
-
-  def parse_out
-    runtime_minutes = 0
-    retries = 0
-    backups = 0
-    steps = 0
-    run_summaries.each do |summary|
-      summary =~ /^\s*runtime\s*\(minutes\),\s+retries,\s+backups,\ssteps\s+(\d+\.?\d*)\s+(\d+)\s+(\d+)\s+(\d+)\s*$/
-      runtime_minutes += $1.to_f
-      retries += $2.to_i
-      backups += $3.to_i
-      steps += $4.to_i
-    end
-    {runtime_minutes: runtime_minutes, retries: retries, backups: backups,
-     steps: steps}
   end
 
   private
@@ -1484,7 +1402,7 @@ class MesaTestCase
     @outcome = :pass
     # this should ONLY be read after we are certain we've passed AND that we
     # even have a newly-made checksum
-    if File.exist?('checks.md5') && @mesa.update_checksums
+    if File.exist?('checks.md5')
       # sometimes we want to ignore the final checksum value
       # we still want to check that restarts on individual machines are bit-for-bit
       # but we don't require bit-for-bit globally, so we report a bogus checksum
@@ -1538,32 +1456,15 @@ class MesaTestCase
     return fail_test(:final_model) unless File.exist?(final_model)
 
     # update checksums
-    #
-    # if this is true, behave like each_test_run.  update the checksum
-    # after rn and then check it matches after re
-    #
-    # if this is false, behave like each_test_run_and_diff.  assume
-    # the checksum is up-to-date and check it matches after rn and re.
-    if @mesa.update_checksums
-      @diff = 0  # this means no diffs run
-      puts "md5sum \"#{final_model}\" > checks.md5"
-      bash_execute("md5sum \"#{final_model}\" > checks.md5")
-      FileUtils.cp final_model, 'final_check.mod'
+    puts "md5sum \"#{final_model}\" > checks.md5"
+    bash_execute("md5sum \"#{final_model}\" > checks.md5")
 
-      # if there's no photo, we won't check the checksum, so we've succeeded
-      return succeed(:run_test_string) unless photo
-      # if there is a photo, we'll have to wait and see
-      return true
-    end
+    # if there's no photo, we won't check the checksum, so we've succeeded
+    return succeed(:run_test_string) unless photo
 
-    # check that final model matches
-    @diff = 1  # this means diffs were run
-    puts './ck >& final_check_diff.txt'
-    return fail_test(:run_checksum) unless
-      bash_execute('./ck >& final_check_diff.txt')
-    return fail_test(:run_diff) if File.exist?('final_check_diff.txt') &&
-                                   !File.read('final_check_diff.txt').empty?
-    return succeed(:run_checksum) if File.exist? final_model
+    # if there is a photo, we'll have to wait and see, but this part succeeded,
+    # so we'll return true so +build_and_run+ knows to do the restart
+    return true
   end
 
   # prepare for and do restart, check results, and return pass/fail status
@@ -1712,17 +1613,6 @@ class MesaTestCase
   end
 
   def get_summary_text
-    # original plan was to include diff data in summary text... now it's just
-    # part of the test_instance object and is submitted as an integer
-    # res = case diff
-    #       when 0
-    #         "No Diff\n"
-    #       when 1
-    #         "Diff\n"
-    #       else
-    #         "Ambiguous Diff\n"
-    #       end
-    # res +
     IO.readlines(out_file).select do |line|
       line =~ /^\s*runtime/ 
     end.join

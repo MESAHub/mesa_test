@@ -47,9 +47,18 @@ e-mail and password will be stored in plain text.'
       s.password = response unless response.empty?
 
       # Get location of source MESA repo (the mirror)
-      response = shell.ask "Where is your mirrored MESA repository located? "\
-        "#(#{s.mesa_git_location}):", :blue
-      s.mesa_git_location = response unless response.empty?
+      response = shell.ask "Where is/should your mirrored MESA repository " \
+      "located? This is where a mirror will be stored from which test " \
+      "repos will be generated. You won't touch this in regular operation. " \
+      "#(#{s.mesa_mirror}):", :blue
+      s.mesa_mirror = response unless response.empty?
+
+      # Get location of source MESA work (where testing happens)
+      response = shell.ask "Where is/should your working directory for "\
+      "testing be located? This is where testing actually occurs, but all "\
+      "files it uses are cached in the mirror repo to save time later. " \
+      "#(#{s.mesa_work}):", :blue
+      s.mesa_work = response unless response.empty?
 
       # Get platform information
       response = shell.ask 'What is the platform of this computer (eg. ' \
@@ -85,7 +94,7 @@ e-mail and password will be stored in plain text.'
   end
 
   def self.new_from_config(
-    config_file: File.join(ENV['HOME'], '.mesa_test.', 'config.yml'), force_setup: false,
+    config_file: File.join(ENV['HOME'], '.mesa_test', 'config.yml'), force_setup: false,
     base_uri: DEFAULT_URI
     # base_uri: 'http://localhost:3000'
   )
@@ -101,23 +110,28 @@ e-mail and password will be stored in plain text.'
   end
 
   attr_accessor :computer_name, :user_name, :email, :password, :platform,
-                :mesa_git_location, :platform_version, :processor, :ram_gb,
-                :compiler, :compiler_version, :config_file, :base_uri,
+                :mesa_mirror, :mesa_work, :platform_version, :processor,
+                :ram_gb, :compiler, :compiler_version, :config_file, :base_uri,
                 :last_tested
 
   attr_reader :shell
 
   # many defaults are set in body
   def initialize(
-      computer_name: nil, user_name: nil, email: nil, platform: nil,
-      platform_version: nil, processor: nil, ram_gb: nil, compiler: nil,
-      compiler_version: nil, config_file: nil, base_uri: nil, last_tested: nil
+      computer_name: nil, user_name: nil, email: nil, mesa_mirror: nil,
+      platform: nil, platform_version: nil, processor: nil, ram_gb: nil,
+      compiler: nil, compiler_version: nil, config_file: nil, base_uri: nil,
+      last_tested: nil
   )
     @computer_name = computer_name || Socket.gethostname.scan(/^[^\.]+\.?/)[0]
     @computer_name.chomp!('.') if @computer_name
     @user_name = user_name || (ENV['USER'] || ENV['USERNAME'])
     @email = email || ''
     @password = password || ''
+    @mesa_mirror = mesa_mirror ||
+      File.join(ENV['HOME'], '.mesa_test', 'mesa_mirror')
+    @mesa_work = mesa_work ||
+      File.join(ENV['HOME'], '.mesa_test', 'mesa_work')
     @platform = platform
     if @platform.nil?
       @platform =
@@ -138,6 +152,14 @@ e-mail and password will be stored in plain text.'
     @base_uri = base_uri
     @last_tested = last_tested || DEFAULT_REVISION
 
+    # set up mirror if it doesn't exist
+    unless File.exist?(File.join(mesa_mirror, '.git'))
+      shell.say "Creating initial mirror at #{mesa_mirror}. This may take "\
+        "awhile, but it will only happen once.", :blue
+      bash_execute('git clone --mirror git@github.com:MESAHub/mesa-sandbox-'\
+        "lfs.git #{mesa_mirror}")
+    end
+
     # set up thor-proof way to get responses from user. Thor hijacks the
     # gets command, so we have to use its built-in "ask" method, which is
     # actually more useful
@@ -156,6 +178,7 @@ e-mail and password will be stored in plain text.'
     puts "Computer Name           #{computer_name}"
     puts "User email              #{email}"
     puts 'Password                ***********'
+    puts "MESA Mirror Location    #{mesa_mirror}"
     puts "Platform                #{platform} #{platform_version}"
     puts "Compiler                #{compiler} #{compiler_version}"
     puts "Config location         #{config_file}"
@@ -184,7 +207,7 @@ e-mail and password will be stored in plain text.'
       'computer_name' => computer_name,
       'email' => email,
       'password' => password,
-      'mesa_git_location' => mesa_git_location,
+      'mesa_mirror' => mesa_mirror,
       'platform' => platform,
       'platform_version' => platform_version,
       'compiler' => compiler,
@@ -198,7 +221,7 @@ e-mail and password will be stored in plain text.'
     @computer_name = data_hash['computer_name']
     @email = data_hash['email']
     @password = data_hash['password']
-    @mesa_git_location = data_hash['mesa_git_location']
+    @mesa_mirror = data_hash['mesa_mirror']
     @platform = data_hash['platform']
     @platform_version = data_hash['platform_version']
     @compiler = data_hash['compiler']
@@ -307,6 +330,88 @@ e-mail and password will be stored in plain text.'
       end
     end
     [res, has_errors]
+  end
+
+  def submitter_params
+    {email: email, password: password, computer: computer_name}
+  end
+
+  def commit_params(mesa, entire: true, empty: false)
+    {sha: mesa.sha, compiled: mesa.installed?, entire: entire, empty: empty}
+  end
+
+  # given a valid +Mesa+ object, create an array of hashes that describe the
+  # test cases and the test results
+  def instance_params(mesa)
+    has_errors = []
+    res = []
+    mesa.test_names.each do |mod, names|
+      names.each do |test_name|
+        begin
+          test_case = mesa.test_cases[mod][test_name]
+          res << {
+            test_case: test_name,
+            mod: mod,
+            runtime_seconds: test_case.runtime_seconds,
+            re_time: test_case.re_time,
+            total_runtime_seconds: test_case.total_runtime_seconds,
+            passed: test_case.passed?,
+            compiler: test_case.compiler || compiler,
+            compiler_version: test_case.compiler_version || compiler_version,
+            platform_version: platform_version,
+            omp_num_threads: test_case.test_omp_num_threads,
+            success_type: test_case.success_type,
+            failure_type: test_case.failure_type,
+            steps: test_case.steps,
+            retries: test_case.retries,
+            backups: test_case.backups,
+            checksum: test_case.checksum,
+            rn_mem: test_case.rn_mem,
+            re_mem: test_case.re_mem,
+            summary_text: test_case.summary_text
+          }
+        rescue TestCaseDirError
+          shell.say "Passage status for #{test_case.test_name} not yet "\
+                    'known. Run test first and then submit.', :red
+          has_errors << test_case
+        end
+      end
+    end
+    unless has_errors.empty?
+      shell.say "The following test cases could NOT be read for submission:",
+                :red
+      has_errors.each do |test_case|
+        shell.say "#{test_case.test_name}"
+      end
+    end
+    res
+  end
+
+  # parameters for a single test case. +mesa+ is an instance of +Mesa+, and
+  # +test_case_name+ is a string that is a valid test case name OR a number
+  # indicating its position in the list of test cases
+  def single_instance_params(test_case)
+    [{
+      test_case: test_case.test_name,
+      mod: test_case.mod,
+      runtime_seconds: test_case.runtime_seconds,
+      re_time: test_case.re_time,
+      total_runtime_seconds: test_case.total_runtime_seconds,
+      passed: test_case.passed?,
+      compiler: test_case.compiler || compiler,
+      compiler_version: test_case.compiler_version || compiler_version,
+      platform_version: platform_version,
+      omp_num_threads: test_case.test_omp_num_threads,
+      success_type: test_case.success_type,
+      failure_type: test_case.failure_type,
+      steps: test_case.steps,
+      retries: test_case.retries,
+      backups: test_case.backups,
+      checksum: test_case.checksum,
+      rn_mem: test_case.rn_mem,
+      re_mem: test_case.re_mem,
+      summary_text: test_case.summary_text
+    }]
   end
 
   def confirm_computer
@@ -443,6 +548,80 @@ e-mail and password will be stored in plain text.'
       true      
     end
   end
+
+  # submit entire commit's worth of test cases, OR submit compilation status
+  # and NO test cases
+  def submit_commit(mesa, empty: false)
+    uri = URI.parse(base_uri + '/submissions/create.json')
+    https = Net::HTTP.new(uri.hostname, uri.port)
+    https.use_ssl = true if base_uri.include? 'https'
+
+    request = Net::HTTP::Post.new(
+      uri,
+      initheader = { 'Content-Type' => 'application/json' }
+    )
+
+    # create the request body for submission to the submissions API
+    # 
+    # if we have an empty submission, then it is necessarily not entire.
+    # Similarly, a non-empty submission is necessarily entire (otherwise one
+    # would use +submit_instance+)
+    request_data = {submitter: submitter_params,
+                    commit: commit_params(mesa, empty: empty, entire: !empty)}
+    # don't need test instances if it's an empty submission or if compilation
+    # failed
+    if !empty && request_data[:commit][:compiled]
+      request_data[:instances] = instance_params(mesa)
+    end
+    request.body = request_data.to_json
+
+    # actually do the submission
+    response = https.request request
+
+    if !response.is_a? Net::HTTPCreated
+      shell.say "\nFailed to submit some or all test case instances and/or "\
+                'commit data.', :red
+      false
+    else
+      shell.say "\nSuccessfully submitted commit #{mesa.sha}.", :green
+      true
+    end
+  end
+
+  # submit results for a single test case instance. Does *not* report overall
+  # compilation status to testhub. Use an empty commit submission for that
+  def submit_instance(mesa, test_case)
+    uri = URI.parse(base_uri + '/submissions/create.json')
+    https = Net::HTTP.new(uri.hostname, uri.port)
+    https.use_ssl = true if base_uri.include? 'https'
+
+    request = Net::HTTP::Post.new(
+      uri,
+      initheader = { 'Content-Type' => 'application/json' }
+    )
+
+    # create the request body for submission to the submissions API
+    # 
+    # submission is not empty (there is one test case), and it is also not
+    # entire (... there is only test case)
+    request_data = {submitter: submitter_params,
+                    commit: commit_params(mesa, empty: false, entire: false),
+                    instances: single_instance_params(test_case)}
+    request.body = request_data.to_json
+
+    # actually do the submission
+    response = https.request request
+
+    if !response.is_a? Net::HTTPCreated
+      shell.say "\nFailed to submit #{test_case.test_name} for commit "\
+                "#{mesa.sha}", :red
+      false
+    else
+      shell.say "\nSuccessfully submitted instance of #{test_case.test_name} "\
+                "for commit #{mesa.sha}.", :green
+      true
+    end
+  end
 end
 
 class Mesa
@@ -467,6 +646,15 @@ class Mesa
     Mesa.new(mesa_dir: new_mesa_dir, use_svn: use_svn, using_sdk: using_sdk)
   end
 
+  def self.checkout(sha: nil, work_dir: nil, mirror_dir: nil, using_sdk: true)
+    bash_execute("git -C #{mirror_dir} worktree add #{work_dir} #{sha}")
+    Mesa.new(mesa_dir: work_dir, using_sdk: using_sdk, use_svn: false)
+  end
+
+  def sha
+    bashticks("git -C #{mesa_dir} rev-parse HEAD")
+  end
+
   def initialize(mesa_dir: ENV['MESA_DIR'], use_svn: true, using_sdk: true)
     # absolute_path ensures that it doesn't matter where commands are executed
     # from
@@ -484,6 +672,7 @@ class Mesa
     @shell = Thor::Shell::Color.new
 
     # these can be populated by calling load_svn_data
+    # don't care about this garbage in the git era, testhub takes care of it!
     @svn_version = nil
     @svn_author = nil
     @svn_log = nil
@@ -1568,4 +1757,10 @@ end
 # force the execution to happen with bash
 def bash_execute(command)
   system('bash -c "' + command + '"')
+end
+
+# force execution to happen with bash, but return result rather than exit
+# status (like backticks)
+def bashticks(command)
+  `bash -c "#{command}"`.chomp
 end

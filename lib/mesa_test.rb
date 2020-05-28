@@ -1207,7 +1207,7 @@ class MesaTestCase
      # pull out 2nd most recent one
      re_photo = File.basename(photo_files.sort_by { |file_name| File.stat(file_name).mtime } [-2])
      # if binary, trim off prefix
-     re_photo.delete_prefix!("b_")
+     re_photo = re_photo.sub("b_", "")
     else
      re_photo = photo
     end

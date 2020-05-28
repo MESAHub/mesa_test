@@ -297,17 +297,17 @@ class MesaTest < Thor
   end
 
   def create_and_check_mesa(mesa_dir: '', mirror_dir: '', mod: :all,
-                            using_sdk: true, use_svn: false)
+                            using_sdk: true)
     m = Mesa.new(mesa_dir: mesa_dir, mirror_dir: mirror_dir, 
-      using_sdk: using_sdk, use_svn: use_svn)
+      using_sdk: using_sdk)
     check_mesa(m)
     update_mesa(mesa: m, mod: mod)
   end
 
   def check_mesa(mesa)
     unless mesa.downloaded?
-      raise MesaDirError, "Invalid MESA_DIR: #{mesa_dir}. Please download " \
-      'and install a valid MESA version or provide the path to one.'
+      raise MesaDirError, "Invalid MESA_DIR: #{mesa.mesa_dir}. Please "\
+      'download and install a valid MESA version or provide the path to one.'
     end
   end
 

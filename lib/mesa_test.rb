@@ -111,7 +111,7 @@ e-mail and password will be stored in plain text.'
 
   attr_accessor :computer_name, :user_name, :email, :password, :platform,
                 :mesa_mirror, :mesa_work, :platform_version, :processor,
-                :ram_gb, :compiler, :compiler_version, :config_file, :base_uri,
+                :compiler, :compiler_version, :config_file, :base_uri,
                 :last_tested
 
   attr_reader :shell
@@ -119,9 +119,8 @@ e-mail and password will be stored in plain text.'
   # many defaults are set in body
   def initialize(
       computer_name: nil, user_name: nil, email: nil, mesa_mirror: nil,
-      platform: nil, platform_version: nil, processor: nil, ram_gb: nil,
-      compiler: nil, compiler_version: nil, config_file: nil, base_uri: nil,
-      last_tested: nil
+      platform: nil, platform_version: nil, processor: nil, compiler: nil,
+      compiler_version: nil, config_file: nil, base_uri: nil, last_tested: nil
   )
     @computer_name = computer_name || Socket.gethostname.scan(/^[^\.]+\.?/)[0]
     @computer_name.chomp!('.') if @computer_name
@@ -410,14 +409,12 @@ e-mail and password will be stored in plain text.'
 end
 
 class Mesa
-  SVN_URI = 'https://subversion.assembla.com/svn/mesa\^mesa/trunk'.freeze    
-
   attr_reader :mesa_dir, :mirror_dir, :test_data, :test_names, :test_cases, 
               :shell, :using_sdk
 
   def self.checkout(sha: nil, work_dir: nil, mirror_dir: nil, using_sdk: true)
     m = Mesa.new(mesa_dir: work_dir, mirror_dir: mirror_dir,
-                 using_sdk: using_sdk, use_svn: false)
+                 using_sdk: using_sdk)
     m.checkout(sha: sha)
     m
   end
@@ -803,7 +800,7 @@ class MesaTestCase
                 :outcome
 
   def self.modules
-    %i[star binary astero]
+    %i[star binary]
   end
 
   def initialize(test: nil, mesa: nil, success_string: '',
@@ -811,7 +808,6 @@ class MesaTestCase
     @test_name = test
     @mesa_dir = mesa.mesa_dir
     @mesa = mesa
-    @mesa_version = mesa.version_number
     @mesa_sha = mesa.sha
     @success_string = success_string
     @final_model = final_model
@@ -1387,7 +1383,6 @@ def generate_seeds_rb(mesa_dir, outfile)
     m.test_names.each do |test_case_name|
       f.puts '    {'
       f.puts "      name: '#{test_case_name}',"
-      f.puts "      version_added: #{m.version_number},"
       # no comma on last one
       if test_case_name == m.test_names[-1]
         f.puts('    }')

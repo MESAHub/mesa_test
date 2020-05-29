@@ -441,7 +441,7 @@ class Mesa
 
   def checkout(sha: 'HEAD')
     # set up mirror if it doesn't exist
-    unless dir_or_symlink_exists?(File.join(mirror_dir, '.git'))
+    unless dir_or_symlink_exists?(mirror_dir)
       shell.say "\nCreating initial mirror at #{mirror_dir}. "\
                 'This might take awhile...', :blue
       FileUtils.mkdir_p mirror_dir

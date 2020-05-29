@@ -74,8 +74,8 @@ e-mail and password will be stored in plain text.'
       s.compiler = response unless response.empty?
 
       # Get compiler version
-      response = shell.ask 'What version of the compiler (eg. 20170921 or ' \
-        "7.2.0)? (#{s.compiler_version}):", :blue
+      response = shell.ask 'What version of the compiler (eg. '\
+        "x86_64-macos-20.3.1 or 7.2.0)? (#{s.compiler_version}):", :blue
       s.compiler_version = response unless response.empty?
 
       # Confirm save location
@@ -207,6 +207,10 @@ e-mail and password will be stored in plain text.'
       'compiler' => compiler,
       'compiler_version' => compiler_version
     }
+    # make sure there's a directory to write to
+    unless dir_or_symlink_exists? File.dirname(config_file)
+      FileUtils.mkdir_p File.dirname(config_file)
+    end
     File.open(config_file, 'w') { |f| f.write(YAML.dump(data_hash)) }
   end
 
@@ -437,9 +441,10 @@ class Mesa
 
   def checkout(sha: 'HEAD')
     # set up mirror if it doesn't exist
-    unless File.exist?(File.join(mirror_dir, '.git'))
+    unless dir_or_symlink_exists?(File.join(mirror_dir, '.git'))
       shell.say "\nCreating initial mirror at #{mirror_dir}. "\
                 'This might take awhile...', :blue
+      FileUtils.mkdir_p mirror_dir
       command = 'git clone --mirror https://github.com/MESAHub/mesa-sandbox'\
                 "-lfs.git #{mirror_dir}"
       shell.say command
@@ -453,6 +458,7 @@ class Mesa
 
     # create "work" directory with proper commit
     shell.say "\nSetting up worktree repo...", :blue
+    FileUtils.mkdir_p mesa_dir
     command = "git -C #{mirror_dir} worktree add #{mesa_dir} #{sha}"
     shell.say command
     bash_execute(command)

@@ -128,9 +128,9 @@ e-mail and password will be stored in plain text.'
     @email = email || ''
     @password = password || ''
     @mesa_mirror = mesa_mirror ||
-      File.join(ENV['HOME'], '.mesa_test', 'mesa_test_mirror')
+      File.join(ENV['HOME'], '.mesa_test', 'mirror')
     @mesa_work = mesa_work ||
-      File.join(ENV['HOME'], '.mesa_test', 'mesa_test_work')
+      File.join(ENV['HOME'], '.mesa_test', 'work')
     @platform = platform
     if @platform.nil?
       @platform =
@@ -452,7 +452,7 @@ class Mesa
     remove
 
     # create "work" directory with proper commit
-    shell.say "\nAdding work directory to worktree...", :blue
+    shell.say "\nSetting up worktree repo...", :blue
     command = "git -C #{mirror_dir} worktree add #{mesa_dir} #{sha}"
     shell.say command
     bash_execute(command)

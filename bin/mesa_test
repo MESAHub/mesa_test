@@ -70,7 +70,7 @@ class MesaTest < Thor
 
       # submit results
       shell.say 'Submitting results to ' + s.base_uri + '... ', :blue
-      s.submit(t)
+      s.submit_instance(m, t)
       shell.say "Done.\n", :green
     else
       # run all tests
@@ -128,7 +128,7 @@ class MesaTest < Thor
 
       # submit results
       shell.say 'Submitting results to ' + s.base_uri + '... ', :blue
-      s.submit_instance(t)
+      s.submit_instance(m, t)
       shell.say "Done.\n", :green
     else
       begin

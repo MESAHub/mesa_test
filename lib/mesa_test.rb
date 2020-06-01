@@ -268,7 +268,6 @@ e-mail and password will be stored in plain text.'
             failure_type: test_case.failure_type,
             steps: test_case.steps,
             retries: test_case.retries,
-            backups: test_case.backups,
             checksum: test_case.checksum,
             rn_mem: test_case.rn_mem,
             re_mem: test_case.re_mem,
@@ -310,7 +309,6 @@ e-mail and password will be stored in plain text.'
       failure_type: test_case.failure_type,
       steps: test_case.steps,
       retries: test_case.retries,
-      backups: test_case.backups,
       checksum: test_case.checksum,
       rn_mem: test_case.rn_mem,
       re_mem: test_case.re_mem,
@@ -801,7 +799,7 @@ class MesaTestCase
               :failure_msg, :success_msg, :photo, :runtime_seconds,
               :test_omp_num_threads, :mesa_sha, :shell, :mod,
               :summary_text, :compiler, :compiler_version, :checksum, :rn_mem,
-              :re_mem, :re_time, :total_runtime_seconds
+              :re_mem, :re_time, :total_runtime_seconds, :steps, :retries
   attr_accessor :data_names, :data_types, :failure_type, :success_type,
                 :outcome
 
@@ -824,6 +822,8 @@ class MesaTestCase
     @runtime_seconds = 0
     @test_omp_num_threads = 1
     @total_runtime_seconds = 0
+    @steps = 0
+    @retries = 0
 
     # start with nil. Should only be updated to a non-nil value if test is
     # completely successful
@@ -878,7 +878,7 @@ class MesaTestCase
   end
 
   def passed?
-    case @outcome == :pass
+    case @outcome
     when :pass then true
     when :fail then false
     else
@@ -1004,6 +1004,8 @@ class MesaTestCase
       'success_type' => success_type,
       'failure_type' => failure_type,
       'checksum' => checksum,
+      'steps' => steps,
+      'retries' => retries,
       'rn_mem' => rn_mem,
       're_mem' => re_mem,
       'summary_text' => summary_text
@@ -1030,11 +1032,15 @@ class MesaTestCase
     @re_time = data['re_time'] || @re_time
     @total_runtime_seconds = data['total_runtime_seconds'] || @total_runtime_seconds
     @mod = data['module'] || @mod
+    puts "outcome was #{@outcome}"
     @outcome = data['outcome'] || @outcome
+    puts "outcome is now #{@outcome}"
     @test_omp_num_threads = data['omp_num_threads'] || @test_omp_num_threads
     @success_type = data['success_type'] || @success_type
     @failure_type = data['failure_type'] || @failure_type
     @checksum = data['checksum'] || @checksum
+    @steps = data['steps'] || @steps
+    @retries = data['retries'] || @retries
     @rn_mem = data['rn_mem'] || @rn_mem
     @re_mem = data['re_mem'] || @re_mem
     @summary_text = data['summary_text'] || @summary_text

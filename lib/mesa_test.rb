@@ -875,9 +875,7 @@ class MesaTestCase
     @re_time = data['re_time'] || @re_time
     @total_runtime_seconds = data['total_runtime_seconds'] || @total_runtime_seconds
     @mod = data['module'] || @mod
-    puts "outcome was #{@outcome}"
     @outcome = data['outcome'] || @outcome
-    puts "outcome is now #{@outcome}"
     @test_omp_num_threads = data['omp_num_threads'] || @test_omp_num_threads
     @success_type = data['success_type'] || @success_type
     @failure_type = data['failure_type'] || @failure_type

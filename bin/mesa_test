@@ -159,8 +159,6 @@ class MesaTest < Thor
     # assuming config wizard has already been set (perhaps a little reckless)
     # so that we can get at the work directory and mirror directory
     s = create_submitter(force: true)
-    shell.say s.mesa_work
-    shell.say s.mesa_mirror
     Mesa.checkout(sha: sha, work_dir: s.mesa_work, mirror_dir: s.mesa_mirror)
   end
 

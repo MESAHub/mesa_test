@@ -911,7 +911,6 @@ class MesaTestCase
   # based on $MESA_DIR/star/test_suite/each_test_clean, revision 10000
   def clean
     shell.say("Cleaning #{test_name}", color = :yellow)
-    # puts ''
     check_mesa_dir
     check_test_case
     in_dir do
@@ -953,7 +952,6 @@ class MesaTestCase
   # based on $MESA_DIR/star/test_suite/each_test_run_and_diff, revision 10000
   def do_one
     shell.say("Testing #{test_name}", :yellow)
-    # puts ''
     test_start = Time.now
     @test_omp_num_threads = omp_num_threads
     if mesa.using_sdk
@@ -1032,9 +1030,7 @@ class MesaTestCase
     @re_time = data['re_time'] || @re_time
     @total_runtime_seconds = data['total_runtime_seconds'] || @total_runtime_seconds
     @mod = data['module'] || @mod
-    puts "outcome was #{@outcome}"
     @outcome = data['outcome'] || @outcome
-    puts "outcome is now #{@outcome}"
     @test_omp_num_threads = data['omp_num_threads'] || @test_omp_num_threads
     @success_type = data['success_type'] || @success_type
     @failure_type = data['failure_type'] || @failure_type

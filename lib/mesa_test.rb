@@ -68,16 +68,6 @@ e-mail and password will be stored in plain text.'
         "Ubuntu 16.04)? (#{s.platform_version}):", :blue
       s.platform_version = response unless response.empty?
 
-      # Get compiler information
-      response = shell.ask "Which compiler are you using? (#{s.compiler}):",
-                           :blue, limited_to: ['', 'SDK', 'gfortran', 'ifort']
-      s.compiler = response unless response.empty?
-
-      # Get compiler version
-      response = shell.ask 'What version of the compiler (eg. '\
-        "x86_64-macos-20.3.1 or 7.2.0)? (#{s.compiler_version}):", :blue
-      s.compiler_version = response unless response.empty?
-
       # Confirm save location
       response = shell.ask "This will be saved in #{s.config_file}. Press " \
         'enter to accept or enter a new location:', :blue, path: true
@@ -111,16 +101,15 @@ e-mail and password will be stored in plain text.'
 
   attr_accessor :computer_name, :user_name, :email, :password, :platform,
                 :mesa_mirror, :mesa_work, :platform_version, :processor,
-                :compiler, :compiler_version, :config_file, :base_uri,
-                :last_tested
+                :config_file, :base_uri, :last_tested
 
   attr_reader :shell
 
   # many defaults are set in body
   def initialize(
       computer_name: nil, user_name: nil, email: nil, mesa_mirror: nil,
-      platform: nil, platform_version: nil, processor: nil, compiler: nil,
-      compiler_version: nil, config_file: nil, base_uri: nil, last_tested: nil
+      platform: nil, platform_version: nil, processor: nil, config_file: nil,
+      base_uri: nil, last_tested: nil
   )
     @computer_name = computer_name || Socket.gethostname.scan(/^[^\.]+\.?/)[0]
     @computer_name.chomp!('.') if @computer_name
@@ -144,8 +133,6 @@ e-mail and password will be stored in plain text.'
     end
     @platform_version = platform_version || ''
     @processor = processor || ''
-    @compiler = compiler || 'SDK'
-    @compiler_version = compiler_version || ''
     @config_file = config_file || File.join(ENV['HOME'], '.mesa_test',
                                             'config.yml')
     @base_uri = base_uri
@@ -173,7 +160,6 @@ e-mail and password will be stored in plain text.'
     puts "MESA Mirror Location    #{mesa_mirror}"
     puts "MESA Work Location      #{mesa_work}"
     puts "Platform                #{platform} #{platform_version}"
-    puts "Compiler                #{compiler} #{compiler_version}"
     puts "Config location         #{config_file}"
     puts '-------------------------------------------------------'
     puts ''
@@ -186,15 +172,7 @@ e-mail and password will be stored in plain text.'
   # change platforms (i.e. switch from mac to linux, or change between linux
   # flavors), you should create a new computer account. Similarly, create new
   # computer accounts if you change your RAM or processor. You do not need
-  # to change computers if you upgrade your platform (macOS 10.12 -> 10.13) or
-  # if you try different compilers
-  #
-  # Note this is NOT checked! The server really only uses the test-by-test
-  # quantities (platform version, compiler, compiler version) and the
-  # computer name. Once the computer is found (by the name) all the other
-  # data is assumed to be fixed. The others... probably shouldn't be here,
-  # but remain so you can confirm that the computer on the web server is the
-  # same one you think you are working with locally.
+  # to change computers if you upgrade your platform (macOS 10.12 -> 10.13
   def save_computer_data
     data_hash = {
       'computer_name' => computer_name,
@@ -204,8 +182,6 @@ e-mail and password will be stored in plain text.'
       'mesa_work' => mesa_work,
       'platform' => platform,
       'platform_version' => platform_version,
-      'compiler' => compiler,
-      'compiler_version' => compiler_version
     }
     # make sure there's a directory to write to
     unless dir_or_symlink_exists? File.dirname(config_file)
@@ -223,8 +199,6 @@ e-mail and password will be stored in plain text.'
     @mesa_work = data_hash['mesa_work']
     @platform = data_hash['platform']
     @platform_version = data_hash['platform_version']
-    @compiler = data_hash['compiler']
-    @compiler_version = data_hash['compiler_version']
   end
 
   # Parameters to be submitted in JSON format for reporting information about
@@ -245,7 +219,6 @@ e-mail and password will be stored in plain text.'
       compiled: mesa.installed?,
       entire: entire,
       empty: empty,
-      test_case_names: (entire || empty) ? mesa.test_case_names : ''
     }
   end
 
@@ -255,33 +228,14 @@ e-mail and password will be stored in plain text.'
   def instance_params(mesa)
     has_errors = []
     res = []
-    mesa.test_names.each do |mod, names|
+    mesa.test_case_names.each do |mod, names|
       names.each do |test_name|
         begin
           test_case = mesa.test_cases[mod][test_name]
-          res << {
-            test_case: test_name,
-            mod: mod,
-            runtime_seconds: test_case.runtime_seconds,
-            re_time: test_case.re_time,
-            total_runtime_seconds: test_case.total_runtime_seconds,
-            passed: test_case.passed?,
-            compiler: test_case.compiler || compiler,
-            compiler_version: test_case.compiler_version || compiler_version,
-            platform_version: platform_version,
-            omp_num_threads: test_case.test_omp_num_threads,
-            success_type: test_case.success_type,
-            failure_type: test_case.failure_type,
-            steps: test_case.steps,
-            retries: test_case.retries,
-            checksum: test_case.checksum,
-            rn_mem: test_case.rn_mem,
-            re_mem: test_case.re_mem,
-            summary_text: test_case.summary_text
-          }
+          res << test_case.results_hash
         rescue TestCaseDirError
-          shell.say "Passage status for #{test_case.test_name} not yet "\
-                    'known. Run test first and then submit.', :red
+          # shell.say "It appears that #{test_case.test_name} has not been "\
+          #           'run yet. Unable to submit data for this test.', :red
           has_errors << test_case
         end
       end
@@ -290,36 +244,17 @@ e-mail and password will be stored in plain text.'
       shell.say "The following test cases could NOT be read for submission:",
                 :red
       has_errors.each do |test_case|
-        shell.say "#{test_case.test_name}"
+        shell.say "- #{test_case.test_name}", :red
       end
     end
     res
   end
 
   # Parameters for a single test case. +mesa+ is an instance of +Mesa+, and
-  # +test_case_name+ is a string that is a valid test case name OR a number
-  # indicating its position in the list of test cases
+  # +test_case+ is an instance of MesaTestCase representing the test case to
+  # be submitted
   def single_instance_params(test_case)
-    [{
-      test_case: test_case.test_name,
-      mod: test_case.mod,
-      runtime_seconds: test_case.runtime_seconds,
-      re_time: test_case.re_time,
-      total_runtime_seconds: test_case.total_runtime_seconds,
-      passed: test_case.passed?,
-      compiler: test_case.compiler || compiler,
-      compiler_version: test_case.compiler_version || compiler_version,
-      platform_version: platform_version,
-      omp_num_threads: test_case.test_omp_num_threads,
-      success_type: test_case.success_type,
-      failure_type: test_case.failure_type,
-      steps: test_case.steps,
-      retries: test_case.retries,
-      checksum: test_case.checksum,
-      rn_mem: test_case.rn_mem,
-      re_mem: test_case.re_mem,
-      summary_text: test_case.summary_text
-    }]
+    [test_case.results_hash]
   end
 
   # Phone home to testhub and confirm that computer and user are valid. Useful
@@ -417,24 +352,25 @@ e-mail and password will be stored in plain text.'
 end
 
 class Mesa
-  attr_reader :mesa_dir, :mirror_dir, :names_to_numbers, :shell, :using_sdk
+  attr_reader :mesa_dir, :mirror_dir, :names_to_numbers, :shell, 
+              :test_case_names, :test_cases
 
-  def self.checkout(sha: nil, work_dir: nil, mirror_dir: nil, using_sdk: true)
-    m = Mesa.new(mesa_dir: work_dir, mirror_dir: mirror_dir,
-                 using_sdk: using_sdk)
+  def self.checkout(sha: nil, work_dir: nil, mirror_dir: nil)
+    m = Mesa.new(mesa_dir: work_dir, mirror_dir: mirror_dir)                 
     m.checkout(sha: sha)
     m
   end
 
-  def initialize(mesa_dir: ENV['MESA_DIR'], mirror_dir: nil, using_sdk: true)
+  def initialize(mesa_dir: ENV['MESA_DIR'], mirror_dir: nil)
     # absolute_path ensures that it doesn't matter where commands are executed
     # from
     @mesa_dir = File.absolute_path(mesa_dir)
     @mirror_dir = File.absolute_path(mirror_dir)
-    @using_sdk = using_sdk
 
-    # this get populated by calling #load_test_data
-    @names_to_numbers = nil
+    # these get populated by calling #load_test_data
+    @test_cases = {}
+    @test_case_names = {}
+    @names_to_numbers = {}
 
     # way to output colored text
     @shell = Thor::Shell::Color.new
@@ -550,12 +486,20 @@ class Mesa
 
       # convert output of +list_tests+ to a dictionary that maps
       # names to numbers since +each_test_run+ only knows about numbers
-      @names_to_numbers ||= {}
       @names_to_numbers[mod] = {}
-      visit_dir(test_suite_dir(mod: mod)) do
+      @test_case_names[mod] = []
+      @test_cases[mod] = {}
+      visit_dir(test_suite_dir(mod: mod), quiet: true) do
         bashticks('./list_tests').split("\n").each do |line|
           num, tc_name = line.strip.split
-          @names_to_numbers[tc_name] = num.to_i
+          @names_to_numbers[mod][tc_name.strip] = num.to_i
+          @test_case_names[mod] << tc_name.strip
+          @test_cases[mod][tc_name.strip] = MesaTestCase.new(
+            test: tc_name.strip,
+            mod: mod,
+            position: num.to_i,
+            mesa: self
+          )
         end
       end
     end
@@ -587,18 +531,6 @@ class Mesa
       end
     end
   end
-
-  # def each_test_load_results(mod: :all)
-  #   if mod == :all
-  #     MesaTestCase.modules.each do |this_mod|
-  #       each_test_load_results(mod: this_mod)
-  #     end
-  #   else
-  #     test_names[mod].each do |test_name|
-  #       test_cases[mod][test_name].load_results
-  #     end
-  #   end
-  # end
 
   def downloaded?
     check_mesa_dir
@@ -645,7 +577,7 @@ class Mesa
     if mod == :all
       # build up list by first constructing each modules list and then
       # concatenating them
-      res = MesaTestCase.inject([]) do |res, mod|
+      res = MesaTestCase.modules.inject([]) do |res, mod|
         res += all_names_ordered(mod: mod)
       end
     else
@@ -656,7 +588,7 @@ class Mesa
       # we assign keys to positions in the array according to their value
       @names_to_numbers[mod].each_pair do |key, val|
         res[val - 1] = key # +list_tests+ gives 1-indexed positions
-      end 
+      end
       res
     end
   end
@@ -664,23 +596,20 @@ class Mesa
   def find_test_case_by_name(test_case_name: nil, mod: :all)
     load_test_source_data unless @names_to_numbers
     if mod == :all
-      # look through all loaded modules for desired test case name, return
-      # FIRST found (assuming no name duplication across modules)
+      # look through all loaded modules for desired test case name, only 
+      # return a test case if a single case is found with that name
       case all_names_ordered.count(test_case_name)
       when 1
         # it exists in exactly one module, but we need to find the module
         # and then return the +MesaTestCase+ object
         MesaTestCase.modules.each do |mod|
-          if @names_to_numbers.keys.include? test_case_name
+          if @test_case_names[mod].include? test_case_name
             # found it, return the appropriate object
-            return MesaTestCase.new(
-              test: test_case_name,
-              mod: mod,
-              mesa: self,
-              position: @names_to_numbers[mod][test_case_name]
-            )
+            return @test_cases[mod][test_case_name]
           end
         end
+        raise "Weird problem: found test case in overall names, but "\
+          "not in any particular module. This shouldn't happen."
       when 0
         raise TestCaseDirError.new('Could not find test case ' \
           "#{test_case_name} in any module.")
@@ -694,14 +623,9 @@ class Mesa
       # module specified; check it and return the proper test case (may be nil
       # if the test case doesn't exist)
       check_mod mod
-      if @names_to_numbers[mod].keys.include? test_case_name
+      if @test_case_names[mod].include? test_case_name
         # happy path: test case exists in the specified module
-        return MesaTestCase.new(
-          test: test_case_name,
-          mod: mod,
-          mesa: self,
-          position: @names_to_numbers[mod][test_case_name]
-        )
+        return @test_cases[mod][test_case_name]
       else
         raise TestCaseDirError.new('Could not find test case ' \
           "#{test_case_name} in the #{mod} module.")
@@ -753,13 +677,7 @@ class Mesa
 end
 
 class MesaTestCase
-  attr_reader :test_name, :mesa, :mod, :position, :mesa_dir, :failure_msg,
-              :success_msg, :photo, :runtime_seconds, :test_omp_num_threads,
-              :mesa_sha, :shell, :summary_text, :compiler, :compiler_version,
-              :checksum, :rn_mem, :re_mem, :re_time, :total_runtime_seconds,
-              :steps, :retries
-  attr_accessor :data_names, :data_types, :failure_type, :success_type,
-                :outcome
+  attr_reader :test_name, :mesa, :mod, :position, :shell
 
   def self.modules
     %i[star binary astero]
@@ -775,73 +693,13 @@ class MesaTestCase
     @mod = mod
     @position = position
 
-
-    @mesa_dir = mesa.mesa_dir
-    @mesa_sha = mesa.sha
-    @failure_type = nil
-    @success_type = nil
-    @outcome = :not_tested
-    @runtime_seconds = 0
-    @test_omp_num_threads = 1
-    @total_runtime_seconds = 0
-    @steps = 0
-    @retries = 0
-
-    # start with nil. Should only be updated to a non-nil value if test is
-    # completely successful
-    @checksum = nil
-    @re_time = nil # rn_time is in the form of @runtime_seconds
-
-    # these only get used with modern versions of both the sdk and the test
-    # suite
-    @rn_mem = nil
-    @re_mem = nil
-
-    # note: this gets overridden for new runs, so this is probably irrelevant
-    @summary_text = nil
-
-    # this overrides the submitters choice if it is non-nil
-    @compiler = mesa.using_sdk ? 'SDK' : nil
-    # only relevant if @compiler is SDK. Gets set during do_one
-    @compiler_version = nil
-
-    @failure_msg = {
-      run_test_string: "#{test_name} run failed: does not match test string",
-      final_model: "#{test_name} run failed: final model #{final_model} not " \
-        'made.',
-      photo_file: "#{test_name} restart failed: #{photo} does not exist",
-      photo_checksum: "#{test_name} restart failed: checksum for " \
-        "#{final_model} does not match after ./re",
-      photo_diff: "#{test_name} restart failed; checksum for #{final_model} "\
-        "does not match after ./re",
-      compilation: "#{test_name} compilation failed"
-    }
-    @success_msg = {
-      run_test_string: "#{test_name} run: found test string: " \
-        "'#{success_string}'",
-      photo_checksum: "#{test_name} restart: checksum for #{final_model} " \
-        "matches after ./re #{photo}"
-    }
+    # way to output colored text to shell
+    @shell = Thor::Shell::Color.new
 
     # validate stuff
     check_mesa_dir
     check_test_case
 
-    @data = {}
-    @data_names = []
-
-    # way to output colored text to shell
-    @shell = Thor::Shell::Color.new
-  end
-
-  def passed?
-    case @outcome
-    when :pass then true
-    when :fail then false
-    else
-      raise TestCaseDirError, 'Cannot determine pass/fail status of ' \
-      "#{test_name} yet."
-    end
   end
 
   def test_suite_dir
@@ -861,60 +719,16 @@ class MesaTestCase
     end
   end
 
-  def load_results
-    # loads all parameters from a previous test run, likely for submission
-    # purposes
-    load_file = File.join(test_case_dir, 'test_results.yml')
-    shell.say "Loading data from #{load_file}...", :blue
-    unless File.exist? load_file
-      shell.say "No such file: #{load_file}. No data loaded.", :red
-      return
+  def results_hash
+    testhub_file = File.join(test_case_dir, 'testhub.yml')
+    unless File.exist?(testhub_file)
+      raise TestCaseDirError.new('No results found for test case '\
+                                 "#{test_name}.")
     end
-    data = YAML.safe_load(File.read(load_file), [Symbol])
-    @runtime_seconds = data['runtime_seconds'] || @runtime_seconds
-    @re_time = data['re_time'] || @re_time
-    @total_runtime_seconds = data['total_runtime_seconds'] || @total_runtime_seconds
-    @mod = data['module'] || @mod
-    @outcome = data['outcome'] || @outcome
-    @test_omp_num_threads = data['omp_num_threads'] || @test_omp_num_threads
-    @success_type = data['success_type'] || @success_type
-    @failure_type = data['failure_type'] || @failure_type
-    @checksum = data['checksum'] || @checksum
-    @steps = data['steps'] || @steps
-    @retries = data['retries'] || @retries
-    @rn_mem = data['rn_mem'] || @rn_mem
-    @re_mem = data['re_mem'] || @re_mem
-    @summary_text = data['summary_text'] || @summary_text
-    @compiler = data['compiler'] || @compiler
-
-    @compiler_version = data['compiler_version'] || @compiler_version
-
-    # convert select data to symbols since that is how they are used
-    @outcome = @outcome.to_sym if @outcome
-    @success_type = @success_type.to_sym if @success_type
-    @failure_type = @failure_type.to_sym if @failure_type
-
-    shell.say "Done loading data from #{load_file}.\n", :green
-  end
-
-  def load_summary_data
-    begin
-      @summary_text = get_summary_text
-    rescue Errno::ENOENT
-      shell.say "\nError loading data from #{out_file}. No summary data "\
-                'loaded. Proceeding anyway.', :red
-    end
+    YAML.safe_load(File.read(testhub_file), [Symbol])
   end
 
   private
-
-  def data_types
-    %i[float integer string boolean]
-  end
-
-  def rn_time
-    runtime_seconds
-  end
 
   # cd into the test case directory, do something in a block, then cd back
   # to original directory
@@ -932,45 +746,7 @@ class MesaTestCase
   # "verify" that mesa_dir is valid by checking for test_suite directory
   def check_mesa_dir
     is_valid =  dir_or_symlink_exists? test_suite_dir
-    raise MesaDirError, "Invalid MESA dir: #{mesa_dir}" unless is_valid
-  end
-
-  # append contents of err.txt to end of out.txt, then delete err.txt
-  def append_and_rm_err(outfile = 'out.txt', errfile = 'err.txt')
-    err_contents = File.read(errfile)
-    display_errors(err_contents)
-    log_errors(err_contents, outfile)
-    FileUtils.rm errfile
-  end
-
-  def display_errors(err_contents)
-    return if err_contents.strip.empty?
-    shell.say("\nERRORS", :red)
-    shell.say err_contents
-    shell.say('END OF ERRORS', :red)
-  end
-
-  def log_errors(err_contents, outfile)
-    return if err_contents.strip.empty?
-    File.open(outfile, 'a') { |f_out| f_out.write(err_contents) }
-    shell.say("appended to #{outfile}\n", :red)
-  end
-
-  def simple_clean
-    shell.say './clean'
-    return if bash_execute('./clean')
-    raise TestCaseDirError, 'Encountered an error when running `clean` in ' \
-      "#{Dir.getwd} for test case #{test_name}."
-  end
-
-  def out_file
-    File.join(test_case_dir, 'out.txt')
-  end
-
-  def get_summary_text
-    IO.readlines(out_file).select do |line|
-      line =~ /^\s*runtime/ 
-    end.join
+    raise MesaDirError, "Invalid MESA dir: #{mesa.mesa_dir}" unless is_valid
   end
 
 end
@@ -997,14 +773,14 @@ end
 
 # cd into a new directory, execute a block, then cd back into original
 # directory
-def visit_dir(new_dir)
+def visit_dir(new_dir, quiet: false)
   cwd = Dir.getwd
-  shell.say "Leaving  #{cwd}\n", :blue
-  shell.say "\nEntering #{new_dir}.", :blue
+  shell.say "Leaving  #{cwd}\n", :blue unless quiet
+  shell.say "\nEntering #{new_dir}.", :blue unless quiet
   Dir.chdir(new_dir)
   yield if block_given?
-  shell.say "Leaving  #{new_dir}\n", :blue
-  shell.say "\nRe-entering #{cwd}.", :blue
+  shell.say "Leaving  #{new_dir}\n", :blue unless quiet
+  shell.say "\nRe-entering #{cwd}.", :blue unless quiet
   Dir.chdir(cwd)
 end
 

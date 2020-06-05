@@ -38,12 +38,6 @@ class MesaTest < Thor
                   type: :string, default: 'all', aliases: '-m'                  
   option :log, type: :boolean, default: true, desc: 'Save yml file of test ' \
                'results in test case directory.'
-  option :set_sdk, desc: 'Override user- and test-generated data to deterine' +
-                   ' if the SDK is used and instead use value of --using_sdk.',
-                   type: :boolean, default: false
-  option :using_sdk, desc: 'Assume we are using the SDK and automatically ' +
-                     'determine SDK version. Ignored unless using --set-sdk).',
-                     type: :boolean, default: true
 
   def test(test_case_name=nil)
     s = if options[:submit]
@@ -52,18 +46,14 @@ class MesaTest < Thor
           create_submitter(force: options[:force])
         end
     m = create_and_check_mesa(mesa_dir: s.mesa_work, mirror_dir: s.mesa_mirror,
-                              mod: options[:module].downcase.to_sym,
-                              using_sdk: using_sdk?(s))
+                              mod: options[:module].downcase.to_sym)
     if test_case_name
+      # only testing one test case
       t = create_and_check_test_case(mesa: m, test_case_name: test_case_name,
-                                    mod: options[:module].downcase.to_sym)
+                                     mod: options[:module].downcase.to_sym)
 
-      # clean and run test
-      t.clean
+      # run test
       t.do_one
-
-      # log results
-      t.log_results if options[:log]
 
       # bail out if not submitting
       return unless options[:submit]
@@ -74,11 +64,14 @@ class MesaTest < Thor
       shell.say "Done.\n", :green
     else
       # run all tests
-      m.each_test_run_and_diff(log_results: options[:log],
-                               mod: options[:module].downcase.to_sym)
+      m.each_test_run(mod: options[:module].downcase.to_sym)
 
-      # submit all tests
-      s.submit_commit(m) if options[:submit]
+      # bail out if not submitting
+      return unless options[:submit]
+
+      shell.say 'Submitting results to ' + s.base_uri + '... ', :blue
+      s.submit_commit(m)
+      shell.say "Done.\n", :green
     end
   end
 
@@ -108,42 +101,35 @@ class MesaTest < Thor
   def submit(test_case_name=nil)
     s = create_and_check_submitter(force: options[:force])
     m = create_and_check_mesa(mesa_dir: s.mesa_work, mirror_dir: s.mesa_mirror,
-                              mod: options[:module].downcase.to_sym,
-                              using_sdk: using_sdk?(s))
+                              mod: options[:module].downcase.to_sym)
     empty = options[:empty]
 
     # default value for now; might change to false if we have a bad
     # installation or if a test case is specified
-    entire = true
     
     if test_case_name
-      # this is not an entire submission since we are only submitting one test
-      # case
-      entire = false
+      # just submitting one test case.
+      # this is not an empty submission since there is one test case (the
+      # +empty+ option is ignored in this case)
 
       t = create_and_check_test_case(mesa: m, test_case_name: test_case_name,
                                      mod: options[:module].downcase.to_sym)
-      # load test results
-      t.load_results
-
       # submit results
       shell.say 'Submitting results to ' + s.base_uri + '... ', :blue
       s.submit_instance(m, t)
       shell.say "Done.\n", :green
     else
+      # submitting compilation information and either all tests (entire) or 
+      # no tests (empty)
       begin
         m.check_installation
       rescue MesaDirError
         shell.say %q{This MESA installation doesn't seem to be compiled } \
           'properly. Submitting a compilation failure to MESATestHub.', :red
         empty = true
-        entire = false
-      else
-        # load all test data
-        m.each_test_load_results(mod: options[:module].downcase.to_sym)
       ensure
         # submit all tests
-        s.submit_commit(m, empty: empty, entire: entire)
+        s.submit_commit(m, empty: empty)
       end
     end
   end
@@ -205,12 +191,6 @@ class MesaTest < Thor
                        aliases: '-f'
   option :submit, desc: 'Submit results (if any) to MesaTestHub.',
                   type: :boolean, default: true
-  option :set_sdk, desc: 'Override user- and test-generated data to deterine' +
-                   ' if the SDK is used and instead use value of --using_sdk.',
-                   type: :boolean, default: false
-  option :using_sdk, desc: 'Assume we are using the SDK and automatically ' +
-                     'determine SDK version. Ignored unless using --set-sdk).',
-                     type: :boolean, default: true
   option :module, desc: 'Which module to test and/or submit, if applicable.',
                   type: :string, default: 'all', aliases: '-m'
   option :destroy, type: :boolean, desc: 'Delete mesa installation upon ' \
@@ -227,7 +207,7 @@ class MesaTest < Thor
           create_submitter(force: true)
         end
     m = Mesa.checkout(sha: sha, work_dir: s.mesa_work,
-                      mirror_dir: s.mesa_mirror, using_sdk: using_sdk?(s))
+                      mirror_dir: s.mesa_mirror)
     begin
       m.clean
       m.install
@@ -248,7 +228,7 @@ class MesaTest < Thor
 
       # if requested, installation and submission are successful, destroy the
       # directory
-      m.destroy if successfully_submitted && options[:destroy] && m.installed?
+      m.remove if successfully_submitted && options[:destroy] && m.installed?
     end
   end  
 
@@ -294,10 +274,8 @@ class MesaTest < Thor
     s
   end
 
-  def create_and_check_mesa(mesa_dir: '', mirror_dir: '', mod: :all,
-                            using_sdk: true)
-    m = Mesa.new(mesa_dir: mesa_dir, mirror_dir: mirror_dir, 
-      using_sdk: using_sdk)
+  def create_and_check_mesa(mesa_dir: '', mirror_dir: '', mod: :all)
+    m = Mesa.new(mesa_dir: mesa_dir, mirror_dir: mirror_dir)
     check_mesa(m)
     update_mesa(mesa: m, mod: mod)
   end
@@ -327,36 +305,6 @@ class MesaTest < Thor
     end.join(' or ')
     msg << '.'
     raise TestCaseDirError, msg
-  end
-
-  # determine whether or not we can assume the test should be / was run with
-  # the SDK. This results should only be relevant if a test is GOING TO BE RUN.
-  # If it has already been run, then the compiler and compiler version have
-  # already been set (or the opportunity was lost, either way this won't help.)
-  # 
-  # This gets used in a lot of places where it probably isn't necessary, just 
-  # to prevent problems later on if things change, as it does no harm when it
-  # doesn't help.
-  # 
-  # The only parameter is a submitter, if there is one to lean on. If there
-  # isn't, it's no problem.
-  def using_sdk?(s = nil)
-    # did user specify so? Trust them
-    if options[:set_sdk]
-      options[:using_sdk]
-    # are we submitting? scrape compiler info from that
-    elsif s
-      s.compiler == 'SDK'
-    # we don't have a submitter... need to read config file (same thing 
-    # submitter is doing)
-    elsif File.exist?(File.join(ENV['HOME'], '.mesa_test.yml'))
-      data = YAML.load(File.read(File.join(ENV['HOME'], '.mesa_test.yml')))
-      data['compiler'] == 'SDK'
-    # nothing works. Don't tell mesa that we are using SDK (we could still be
-    # using it, but it's up to a future submitter to tell the web site so.)
-    else
-      false
-    end
   end
 end
 

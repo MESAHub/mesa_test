@@ -240,7 +240,13 @@ e-mail and password will be stored in plain text.'
   # compilation information), or a non-empty, but also non-entire submission
   # (results for a single test without compilation information)
   def commit_params(mesa, entire: true, empty: false)
-    {sha: mesa.sha, compiled: mesa.installed?, entire: entire, empty: empty}
+    {
+      sha: mesa.sha,
+      compiled: mesa.installed?,
+      entire: entire,
+      empty: empty,
+      test_case_names: (entire || empty) ? mesa.test_case_names : ''
+    }
   end
 
   # Given a valid +Mesa+ object, create an array of hashes that describe the
@@ -411,8 +417,7 @@ e-mail and password will be stored in plain text.'
 end
 
 class Mesa
-  attr_reader :mesa_dir, :mirror_dir, :test_data, :test_names, :test_cases, 
-              :shell, :using_sdk
+  attr_reader :mesa_dir, :mirror_dir, :names_to_numbers, :shell, :using_sdk
 
   def self.checkout(sha: nil, work_dir: nil, mirror_dir: nil, using_sdk: true)
     m = Mesa.new(mesa_dir: work_dir, mirror_dir: mirror_dir,
@@ -428,10 +433,8 @@ class Mesa
     @mirror_dir = File.absolute_path(mirror_dir)
     @using_sdk = using_sdk
 
-    # these get populated by calling #load_test_data
-    @test_data = {}
-    @test_names = {}
-    @test_cases = {}
+    # this get populated by calling #load_test_data
+    @names_to_numbers = nil
 
     # way to output colored text
     @shell = Thor::Shell::Color.new
@@ -544,51 +547,22 @@ class Mesa
       end
     else
       check_mod mod
-      # load data from the source file
-      source_lines = IO.readlines(
-        File.join(test_suite_dir(mod: mod), 'do1_test_source')
-      )
 
-      # initialize data hash to empty hash and name array to empty array
-      @test_data[mod] = {}
-      @test_names[mod] = []
-      @test_cases[mod] = {}
-
-      # read through each line and find four data, name, success string, final
-      # model name, and photo. Either of model name and photo can be "skip"
-      source_lines.each do |line|
-        no_skip = /^do_one (.+)\s+"([^"]*)"\s+"([^"]+)"\s+(x?\d+|auto)/
-        one_skip = /^do_one (.+)\s+"([^"]*)"\s+"([^"]+)"\s+skip/
-        two_skip = /^do_one (.+)\s+"([^"]*)"\s+skip\s+skip/
-        found_test = false
-        if line =~ no_skip
-          found_test = true
-          @test_data[mod][$1] = { success_string: $2, final_model: $3,
-                                  photo: $4}
-        elsif line =~ one_skip
-          found_test = true
-          @test_data[mod][$1] = { success_string: $2, final_model: $3,
-                                  photo: nil }
-        elsif line =~ two_skip
-          found_test = true
-          @test_data[mod][$1] = { success_string: $2, final_model: nil,
-                                  photo: nil }
+      # convert output of +list_tests+ to a dictionary that maps
+      # names to numbers since +each_test_run+ only knows about numbers
+      @names_to_numbers ||= {}
+      @names_to_numbers[mod] = {}
+      visit_dir(test_suite_dir(mod: mod)) do
+        bashticks('./list_tests').split("\n").each do |line|
+          num, tc_name = line.strip.split
+          @names_to_numbers[tc_name] = num.to_i
         end
-
-        if found_test
-          @test_names[mod] << $1 unless @test_names[mod].include? $1
-        end
-      end
-
-      # make MesaTestCase objects accessible by name
-      @test_names[mod].each do |test_name|
-        data = @test_data[mod][test_name]
-        @test_cases[mod][test_name] = MesaTestCase.new(
-          test: test_name, mesa: self, success_string: data[:success_string],
-          mod: mod, final_model: data[:final_model], photo: data[:photo]
-        )
       end
     end
+  end
+
+  def test_case_count(mod: :all)
+    all_names_ordered(mod: mod).count
   end
 
   # can accept a number (in string form) as a name for indexed access
@@ -600,47 +574,31 @@ class Mesa
     end
   end
 
-  # based off of `$MESA_DIR/star/test_suite/each_test_run_and_diff` from
-  # revision 10000
-  def each_test_clean(mod: :all)
-    if mod == :all
-      MesaTestCase.modules.each { |this_mod| each_test_clean mod: this_mod }
-    else
-      check_mod mod
-      test_names[mod].each do |test_name|
-        test_cases[mod][test_name].clean
-      end
-    end
-  end
-
-  def each_test_run_and_diff(mod: :all, log_results: false)
+  def each_test_run(mod: :all)
     check_installation
-    each_test_clean(mod: mod)
 
     if mod == :all
       MesaTestCase.modules.each do |this_mod|
-        each_test_run_and_diff(mod: this_mod, log_results: log_results)
+        each_test_run(mod: this_mod)
       end
     else
-      test_names[mod].each do |test_name|
-        test_cases[mod][test_name].do_one
-        test_cases[mod][test_name].log_results if log_results
+      visit_dir(test_suite_dir(mod)) do
+        bash_execute("./each_test_run")
       end
-      log_summary(mod: mod) if log_results
     end
   end
 
-  def each_test_load_results(mod: :all)
-    if mod == :all
-      MesaTestCase.modules.each do |this_mod|
-        each_test_load_results(mod: this_mod)
-      end
-    else
-      test_names[mod].each do |test_name|
-        test_cases[mod][test_name].load_results
-      end
-    end
-  end
+  # def each_test_load_results(mod: :all)
+  #   if mod == :all
+  #     MesaTestCase.modules.each do |this_mod|
+  #       each_test_load_results(mod: this_mod)
+  #     end
+  #   else
+  #     test_names[mod].each do |test_name|
+  #       test_cases[mod][test_name].load_results
+  #     end
+  #   end
+  # end
 
   def downloaded?
     check_mesa_dir
@@ -649,32 +607,8 @@ class Mesa
   def installed?
     # assume build log reflects installation status; does not account for
     # mucking with modules after the fact
-    File.read(File.join(mesa_dir, 'build.log')).include?(
-      'MESA installation was successful'
-    )
-
-    # OLD METHOD
-    # 
-    # look for output files in the last-installed module
-    # this isn't perfect, but it's a pretty good indicator of completing
-    # installation
-    
-    # install_file = File.join(mesa_dir, 'install')
-    
-    # match last line of things like "do_one SOME_MODULE" or "do_one_parallel 
-    # SOME_MODULE", after which the "SOME_MODULE" will be stored in $1
-    # that is the last module to be compiled by ./install.
-    
-    # IO.readlines(install_file).select do |line|
-    #   line =~ /^\s*do_one\w*\s+\w+/
-    # end.last =~ /^\s*do_one\w*\s+(\w+)/
-    
-    # module is "installed" if there is a nonzero number of files in the
-    # module's make directory of the form SOMETHING.mod
-
-    # !Dir.entries(File.join(mesa_dir, $1, 'make')).select do |file|
-    #   File.extname(file) == '.mod'
-    # end.empty?
+    downloaded? && File.read(File.join(mesa_dir, 'build.log')).include?(
+      'MESA installation was successful')
   end
 
 
@@ -706,49 +640,72 @@ class Mesa
     end
   end
 
-  def log_summary(mod: :all)
+  def all_names_ordered(mod: :all)
+    load_test_source_data unless @names_to_numbers
     if mod == :all
-      MesaTestCase.modules.each do |this_mod|
-        log_summary(mod: this_mod)
+      # build up list by first constructing each modules list and then
+      # concatenating them
+      res = MesaTestCase.inject([]) do |res, mod|
+        res += all_names_ordered(mod: mod)
       end
     else
       check_mod mod
-      res = []
-      test_names[mod].each do |test_name|
-        test_case = test_cases[mod][test_name]
-        res << {
-          'test_name' => test_case.test_name,
-          'outcome' => test_case.outcome,
-          'failure_type' => test_case.failure_type,
-          'success_type' => test_case.success_type,
-          'runtime_seconds' => test_case.runtime_seconds,
-          'omp_num_threads' => test_case.test_omp_num_threads,
-          'mesa_version' => test_case.mesa_version
-        }
-      end
-      summary_file = File.join(test_suite_dir(mod: mod), 'test_summary.yml')
-      File.open(summary_file, 'w') do |f|
-        f.write(YAML.dump(res))
-      end
+      res = Array.new(@names_to_numbers[mod].length, '')
+
+      # values of the hash give their order, keys are the names, so
+      # we assign keys to positions in the array according to their value
+      @names_to_numbers[mod].each_pair do |key, val|
+        res[val - 1] = key # +list_tests+ gives 1-indexed positions
+      end 
+      res
     end
   end
 
   def find_test_case_by_name(test_case_name: nil, mod: :all)
+    load_test_source_data unless @names_to_numbers
     if mod == :all
       # look through all loaded modules for desired test case name, return
       # FIRST found (assuming no name duplication across modules)
-      @test_names.each do |this_mod, mod_names|
-        if mod_names.include? test_case_name
-          return @test_cases[this_mod][test_case_name]
+      case all_names_ordered.count(test_case_name)
+      when 1
+        # it exists in exactly one module, but we need to find the module
+        # and then return the +MesaTestCase+ object
+        MesaTestCase.modules.each do |mod|
+          if @names_to_numbers.keys.include? test_case_name
+            # found it, return the appropriate object
+            return MesaTestCase.new(
+              test: test_case_name,
+              mod: mod,
+              mesa: self,
+              position: @names_to_numbers[mod][test_case_name]
+            )
+          end
         end
+      when 0
+        raise TestCaseDirError.new('Could not find test case ' \
+          "#{test_case_name} in any module.")
+      else
+        raise TestCaseDirError.new('Found multiple test cases named '\
+          "#{test_case_name} in multiple modules. Indicate the module you "\
+          'want to search.')
       end
-      # didn't find any matches, return nil
-      nil
+        # append this array to the end of the exisitng one
     else
       # module specified; check it and return the proper test case (may be nil
       # if the test case doesn't exist)
       check_mod mod
-      @test_cases[mod][test_case_name]
+      if @names_to_numbers[mod].keys.include? test_case_name
+        # happy path: test case exists in the specified module
+        return MesaTestCase.new(
+          test: test_case_name,
+          mod: mod,
+          mesa: self,
+          position: @names_to_numbers[mod][test_case_name]
+        )
+      else
+        raise TestCaseDirError.new('Could not find test case ' \
+          "#{test_case_name} in the #{mod} module.")
+      end
     end
   end
 
@@ -756,66 +713,71 @@ class Mesa
     # this will be the index in the name array of the proper module of
     # the desired test case
     # input numbers are 1-indexed, but we'll fix that later
-    return nil if test_number < 1
-    i = test_number
+    if test_number < 1 || test_number > test_case_count(mod: mod)
+      raise TestCaseDirError.new('Invalid test case number for searching '\
+        "in module #{mod}. Must be between 1 and #{test_case_count(mod: mod)}.")
+    end
 
     if mod == :all
-      # search through each module in order
-      MesaTestCase.modules.each do |this_mod|
-        # if i is a valid index for names of this module, extract the proper
-        # test case taking into account that the given i is 1-indexed
-        if i <= @test_names[this_mod].length
-          # puts "i = #{i} <= #{@test_names[this_mod].length}"
-          # @test_names[this_mod].each_with_index do |test_name, i|
-          #   puts sprintf("%-4d", i + 1) + test_name
-          # end
-          return find_test_case_by_name(
-            test_case_name: @test_names[this_mod][i - 1],
-            mod: this_mod
+      # can get the name easily, now need to find the module
+      test_case_name = all_names_ordered[test_number - 1]
+      MesaTestCase.modules.each do |mod|
+        if test_number <= test_case_count(mod: mod)
+          # test must live in this module; we have everything
+          return MesaTestCase.new(
+            test: test_case_name,
+            mod: mod,
+            mesa: self,
+            position: @names_to_numbers[mod][test_case_name]
           )
+        else
+          # number was too big, so decrement by this modules case count
+          # and move on to next one
+          test_number -= test_case_count(mod: mod)
         end
-        # index lies outside possible range for this module, move on to
-        # next module and decrement index by the number of test cases in this
-        # module
-        i -= @test_names[this_mod].length
       end
-      # return nil if we never broke out of the loop
-      nil
+      # should return before we get here, but fail hard if we do
+      raise TestCaseDirError.new('Unknown problem in loading test case #' +
+        test_number + '.') 
     else
-      # module was specified, so just hope things work out for the number
-      # should probably add a check that the index is actually in the array,
-      # but if you're using this feature, you probably know what you're doing,
-      # right? Right?
-      return find_test_case_by_name(
-        test_case_name: @test_names[mod][i - 1],
-        mod: mod
+      # module was specified, so we can get at everything right away
+      check_mod mod
+      return MesaTestCase.new(
+        test: all_names_ordered(mod: mod)[test_number - 1],
+        mod: mod,
+        mesa: self,
+        position: test_number
       )
     end
   end
 end
 
 class MesaTestCase
-  attr_reader :test_name, :mesa_dir, :mesa, :success_string, :final_model,
-              :failure_msg, :success_msg, :photo, :runtime_seconds,
-              :test_omp_num_threads, :mesa_sha, :shell, :mod,
-              :summary_text, :compiler, :compiler_version, :checksum, :rn_mem,
-              :re_mem, :re_time, :total_runtime_seconds, :steps, :retries
+  attr_reader :test_name, :mesa, :mod, :position, :mesa_dir, :failure_msg,
+              :success_msg, :photo, :runtime_seconds, :test_omp_num_threads,
+              :mesa_sha, :shell, :summary_text, :compiler, :compiler_version,
+              :checksum, :rn_mem, :re_mem, :re_time, :total_runtime_seconds,
+              :steps, :retries
   attr_accessor :data_names, :data_types, :failure_type, :success_type,
                 :outcome
 
   def self.modules
-    %i[star binary]
+    %i[star binary astero]
   end
 
-  def initialize(test: nil, mesa: nil, success_string: '',
-                 final_model: 'final.mod', photo: nil, mod: nil)
+  def initialize(test: nil, mesa: nil, mod: nil, position: nil)
     @test_name = test
-    @mesa_dir = mesa.mesa_dir
     @mesa = mesa
+    unless MesaTestCase.modules.include? mod
+      raise TestCaseDirError, "Invalid module: #{mod}. Must be one of: " +
+                              MesaTestCase.modules.join(', ')
+    end
+    @mod = mod
+    @position = position
+
+
+    @mesa_dir = mesa.mesa_dir
     @mesa_sha = mesa.sha
-    @success_string = success_string
-    @final_model = final_model
-    @photo = photo
     @failure_type = nil
     @success_type = nil
     @outcome = :not_tested
@@ -843,11 +805,6 @@ class MesaTestCase
     # only relevant if @compiler is SDK. Gets set during do_one
     @compiler_version = nil
 
-    unless MesaTestCase.modules.include? mod
-      raise TestCaseDirError, "Invalid module: #{mod}. Must be one of: " +
-                              MesaTestCase.modules.join(', ')
-    end
-    @mod = mod
     @failure_msg = {
       run_test_string: "#{test_name} run failed: does not match test string",
       final_model: "#{test_name} run failed: final model #{final_model} not " \
@@ -895,127 +852,13 @@ class MesaTestCase
     File.join(test_suite_dir, test_name)
   end
 
-  def add_datum(datum_name, datum_type)
-    unless data_types.include? datum_type.to_sym
-      raise InvalidDataType, "Invalid data type: #{datum_type}. Must be one "\
-        'of ' + data_types.join(', ') + '.'
-    end
-    @data[datum_name] = datum_type
-    @data_names << datum_name
-  end
-
-  def omp_num_threads
-    ENV['OMP_NUM_THREADS'].to_i || 1
-  end
-
-  # based on $MESA_DIR/star/test_suite/each_test_clean, revision 10000
-  def clean
-    shell.say("Cleaning #{test_name}", color = :yellow)
-    # puts ''
-    check_mesa_dir
-    check_test_case
-    in_dir do
-      puts './clean'
-      unless bash_execute('./clean')
-        raise TestCaseDirError, 'Encountered an error while running ./clean ' \
-        "in #{Dir.getwd}."
-      end
-      shell.say 'Removing all files from LOGS, LOGS1, LOGS2, photos, ' \
-        'photos1, and photos2 as well as old test results', color = :blue
-      FileUtils.rm_f Dir.glob('LOGS/*')
-      FileUtils.rm_f Dir.glob('LOGS1/*')
-      FileUtils.rm_f Dir.glob('LOGS2/*')
-      FileUtils.rm_f Dir.glob('photos/*')
-      FileUtils.rm_f Dir.glob('photos1/*')
-      FileUtils.rm_f Dir.glob('photos2/*')
-
-      shell.say 'Removing files binary_history.data, out.txt, ' \
-        'test_results.yml, and memory usage files', color = :blue
-      FileUtils.rm_f 'binary_history.data'
-      FileUtils.rm_f 'out.txt'
-      FileUtils.rm_f 'test_results.yml'
-      FileUtils.rm_f Dir.glob('mem-*.txt')
-      if File.directory? File.join('star_history', 'history_out')
-        shell.say 'Removing all files of the form history_out* from ' \
-          'star_history', :blue
-        FileUtils.rm_f Dir.glob(File.join('star_history', 'history_out', '*'))
-      end
-      if File.directory? File.join('star_profile', 'profiles_out')
-        shell.say 'Removing all files of the form profiles_out* from ' \
-          'star_profile', color = :blue
-        FileUtils.rm_f Dir.glob(File.join('star_profile', 'profiles_out', '*'))
-      end
-      shell.say 'Removing .running', color = :blue
-      FileUtils.rm_f '.running'
-    end
-  end
-
-  # based on $MESA_DIR/star/test_suite/each_test_run_and_diff, revision 10000
+  # just punt to +each_test_run+ in the test_suite directory. It's your problem
+  # now, sucker!
   def do_one
     shell.say("Testing #{test_name}", :yellow)
-    # puts ''
-    test_start = Time.now
-    @test_omp_num_threads = omp_num_threads
-    if mesa.using_sdk
-      version_bin = File.join(ENV['MESASDK_ROOT'], 'bin', 'mesasdk_version')
-      # can't use bash_execute because the return value of bash_execute is the
-      # exit status of the commmand (true or false), whereas backticks give the
-      # output (the version string) as the output
-      if File.exist? version_bin
-        # newer SDKs have a simple executable
-        @compiler_version = `#{version_bin}`.strip
-      else
-        # older way, call bash on it (file is mesasdk_version.sh)
-        @compiler_version = `bash -c #{version_bin + '.sh'}`.strip
-      end
-
-      shell.say("Using version #{@compiler_version} of the SDK.", :blue)
+    visit_dir(test_suite_dir) do
+      bash_execute("./each_test_run #{position}")
     end
-    in_dir do
-      FileUtils.touch '.running'
-      build_and_run
-      # report memory usage if it is available
-      if File.exist?('mem-rn.txt')
-        @rn_mem = File.read('mem-rn.txt').strip.to_i
-      end
-      if File.exist?('mem-re.txt')
-        @re_mem = File.read('mem-re.txt').strip.to_i
-      end
-      FileUtils.rm '.running'
-      puts ''
-    end
-    test_finish = Time.now
-    @total_runtime_seconds = (test_finish - test_start).to_i
-  end
-
-  def log_results
-    # gets all parameters that would be submitted as well as computer
-    # information and dumps to a yml file in the test case directory
-    save_file = File.join(test_case_dir, 'test_results.yml')
-    shell.say "Logging test results to #{save_file}...", :blue
-    res = {
-      'test_case' => test_name,
-      'module' => mod,
-      'runtime_seconds' => runtime_seconds,
-      're_time' => re_time,
-      'total_runtime_seconds' => total_runtime_seconds,
-      'outcome' => outcome,
-      'omp_num_threads' => test_omp_num_threads,
-      'success_type' => success_type,
-      'failure_type' => failure_type,
-      'checksum' => checksum,
-      'steps' => steps,
-      'retries' => retries,
-      'rn_mem' => rn_mem,
-      're_mem' => re_mem,
-      'summary_text' => summary_text
-    }
-    if compiler == 'SDK'
-      res['compiler'] = 'SDK'
-      res['compiler_version'] = compiler_version
-    end
-    File.open(save_file, 'w') { |f| f.write(YAML.dump(res)) }
-    shell.say "Successfully saved results to file #{save_file}.\n", :green
   end
 
   def load_results
@@ -1094,207 +937,6 @@ class MesaTestCase
     raise MesaDirError, "Invalid MESA dir: #{mesa_dir}" unless is_valid
   end
 
-  # append message to log file
-  def log_message(msg, color = nil, log_file = 'out.txt')
-    if color.nil?
-      shell.say(msg)
-    else
-      shell.say(msg, color)
-    end
-    File.open(log_file, 'a') { |f| f.puts(msg) }
-  end
-
-  # write failure message to log file
-  def write_failure_message
-    msg = "******************** #{failure_msg[@failure_type]} " \
-      '********************'
-    log_message(msg, :red)
-  end
-
-  # write success message to log file
-  def write_success_msg(success_type)
-    msg = 'PASS ' + success_msg[success_type]
-    log_message(msg, :green)
-  end
-
-  # used as return value for run or photo test. Logs failure to text file, and
-  # sets internal status to failing
-  def fail_test(failure_type)
-    @failure_type = failure_type
-    @outcome = :fail
-    write_failure_message
-    false
-  end
-
-  # used as return value for run or photo test. Logs data to text file, and
-  # sets internal status to passing
-  def succeed(success_type)
-    @success_type = success_type
-    @outcome = :pass
-    # this should ONLY be read after we are certain we've passed AND that we
-    # even have a newly-made checksum
-    if File.exist?('checks.md5')
-      # sometimes we want to ignore the final checksum value
-      # we still want to check that restarts on individual machines are bit-for-bit
-      # but we don't require bit-for-bit globally, so we report a bogus checksum
-      if File.exist?('.ignore_checksum') then
-        @checksum ='00000000000000000000000000000000'
-      else
-        @checksum = File.read('checks.md5').split.first
-      end
-    end
-    write_success_msg(success_type)
-    true
-  end
-
-  def check_run
-    # assumes we are in the directory already, called from something else
-    run_start = Time.now
-
-    # do the run
-    rn_command = if ENV['MESASDK_ROOT'] &&
-                    File.exist?(File.join(ENV['MESASDK_ROOT'], 'bin', 'time'))
-                   %q(command time -f '%M' -o mem-rn.txt ./rn > out.txt 2> ) +
-                     'err.txt'
-                 else
-                   './rn >> out.txt 2> err.txt'
-                 end
-    shell.say rn_command
-    bash_execute(rn_command)
-
-    # report runtime and clean up
-    run_finish = Time.now
-    @runtime_seconds = (run_finish - run_start).to_i
-    @rn_time = (run_finish - run_start).to_i
-    shell.say("Finished with ./rn; runtime = #{@runtime_seconds} seconds.",
-              :blue)
-    append_and_rm_err
-
-    # look for success text
-    success = true
-    File.open('out.txt', 'r') do |f|
-      success = !f.read.downcase.scan(success_string.downcase).empty?
-    end
-    # bail if there was no test string found
-    return fail_test(:run_test_string) unless success
-
-    # no final model to check, and we already found the test string, so pass
-    return succeed(:run_test_string) unless final_model
-
-    # display runtime message
-    shell.say File.read('out.txt').split("\n").select { |line|
-      line =~ /^\s*runtime/i
-    }.join("\n")
-
-    # there's supposed to be a final model; check that it exists first
-    return fail_test(:final_model) unless File.exist?(final_model)
-
-    # update checksums
-    command = "md5sum \"#{final_model}\" > checks.md5"
-    shell.say(command)
-    bash_execute(command)
-
-    # if there's no photo, we won't check the checksum, so we've succeeded
-    return succeed(:run_test_string) unless photo
-
-    # if there is a photo, we'll have to wait and see, but this part succeeded,
-    # so we'll return true so +build_and_run+ knows to do the restart
-    return true
-  end
-
-  # prepare for and do restart, check results, and return pass/fail status
-  def check_restart
-    # abort if there is not photo specified
-    return unless photo
-
-
-    # get antepenultimate photo
-    if photo == "auto" then
-      # get all photos [single-star (x100) or binary (b_x100); exclude binary
-      # stars (1_x100, 2_x100)]
-      photo_files = Dir["photos/*"].select{|p| p =~ /^photos\/(b_)?x?\d+$/}
-      # sort by filesystem modification time
-      sorted_photo_files = photo_files.sort_by do |file_name|
-        File.stat(file_name).mtime
-      end
-      # if you can, pull out 3rd most recent one; otherwise take the oldest
-      if sorted_photo_files.length >= 3 then
-        re_photo = File.basename(sorted_photo_files[-3])
-      else
-        re_photo = File.basename(sorted_photo_files[0])
-      end
-      # if binary, trim off prefix
-      re_photo = re_photo.sub("b_", "")
-    else
-      re_photo = photo
-    end
-
-    # check that photo file actually exists
-    unless File.exist?(File.join('photos', re_photo)) ||
-           File.exist?(File.join('photos1', re_photo)) ||
-           File.exist?(File.join('photos', "b_#{re_photo}"))
-      return fail_test(:photo_file)
-    end
-
-    # remove final model since it will be remade by restart
-    FileUtils.rm_f final_model
-
-    # time restart
-    re_start = Time.now
-    # do restart and consolidate output. Command depends on if we have access
-    # to SDK version of gnu time.
-    re_command = if ENV['MESASDK_ROOT'] && File.exist?(File.join(ENV['MESASDK_ROOT'], 'bin', 'time'))
-                   %q(command time -f '%M' -o mem-re.txt ./re ) + "#{re_photo}" \
-                     ' >> out.txt 2> err.txt'
-                 else
-                   "./re #{re_photo} >> out.txt 2> err.txt"
-                 end
-    shell.say re_command
-    bash_execute(re_command)
-    re_finish = Time.now
-    @re_time = (re_finish - re_start).to_i
-    append_and_rm_err
-
-    # check that final model matches
-    command = './ck >& final_check_diff.txt'
-    shell.say command
-    # fail if checksum production fails
-    return fail_test(:photo_checksum) unless bash_execute(command)
-
-    # fail if checksum from restart doesn't match that from original run
-    if File.exist?('final_check_diff.txt') && 
-       !File.read('final_check_diff.txt').empty? 
-      return fail_test(:photo_diff) 
-    end
-
-    # we got through everything and the checksums match! Strongest possible
-    # success
-    succeed(:photo_checksum)
-  end
-
-  def build_and_run
-    # assumes we are in the test case directory. Should only be called
-    # in the context of an `in_dir` block.
-
-    # first clean and make... Should be compatible with any shell since
-    # redirection is always wrapped in 'bash -c "{STUFF}"'
-    simple_clean
-    begin
-      mk
-    rescue TestCaseDirError
-      return fail_test(:compilation)
-    end
-
-    # remove old final model if it exists
-    remove_final_model
-
-    # only check restart/photo if we get through run successfully
-    check_restart if check_run
-
-    # get reported runtime, retries, backups, and steps
-    load_summary_data if File.exist?(out_file)
-  end
-
   # append contents of err.txt to end of out.txt, then delete err.txt
   def append_and_rm_err(outfile = 'out.txt', errfile = 'err.txt')
     err_contents = File.read(errfile)
@@ -1321,22 +963,6 @@ class MesaTestCase
     return if bash_execute('./clean')
     raise TestCaseDirError, 'Encountered an error when running `clean` in ' \
       "#{Dir.getwd} for test case #{test_name}."
-  end
-
-  def mk
-    shell.say './mk > mk.txt'
-    unless bash_execute('./mk > mk.txt')
-      raise TestCaseDirError, 'Encountered an error when running `mk` in ' \
-        "#{Dir.getwd} for test case #{test_name}."
-    end
-    FileUtils.rm 'mk.txt'
-  end
-
-  def remove_final_model
-    # remove final model if it already exists
-    return unless final_model
-    return unless File.exist?(final_model)
-    FileUtils.rm(final_model)
   end
 
   def out_file

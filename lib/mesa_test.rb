@@ -214,11 +214,22 @@ e-mail and password will be stored in plain text.'
   # compilation information), or a non-empty, but also non-entire submission
   # (results for a single test without compilation information)
   def commit_params(mesa, entire: true, empty: false)
+    # the compiler data should be able to be used as-is, but right now the
+    # names don't match with what the database expects, so we do some renaming
+    # shenanigans.
+    # 
+    ####################################
+    # THIS SHOULD GO BEFORE PRODUCTION #
+    compiler_data = mesa.compiler_hash
     {
       sha: mesa.sha,
       compiled: mesa.installed?,
       entire: entire,
       empty: empty,
+      compiler: compiler_data['compiler'],
+      compiler_version: compiler_data['build'],
+      sdk_version: compiler_data['MESA_SDK_version'],
+      math_backend: compiler_data['math_backend']
     }
   end
 
@@ -458,7 +469,20 @@ class Mesa
       raise MesaDirError, 'Installation check failed (build.log doesn\'t '\
                           'show a successful installation).'
     end
-  end    
+  end
+
+  # sourced from $MESA_DIR/testhub.yml, which should be created after
+  # installation
+  def compiler_hash
+    data_file = File.join(mesa_dir, 'testhub.yml')
+    unless File.exist? data_file
+      raise MesaDirError.new("Could not find file testhub.yml in #{mesa_dir}.")
+    end
+    res = YAML.safe_load(File.read(data_file))
+    # currently version_number is reported, but we don't need that in Git land
+    res.delete('version_number') # returns the value, not the updated hash
+    res
+  end
 
   ## TEST SUITE METHODS
 

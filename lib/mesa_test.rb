@@ -204,7 +204,12 @@ e-mail and password will be stored in plain text.'
   # Parameters to be submitted in JSON format for reporting information about
   # the submitting user and computer
   def submitter_params
-    {email: email, password: password, computer: computer_name}
+    {
+      email: email,
+      password: password,
+      computer: computer_name,
+      platform_version: platform_version
+    }
   end
 
   # Parameters to be submitted in JSON format for reporting information about
@@ -220,17 +225,12 @@ e-mail and password will be stored in plain text.'
     # 
     ####################################
     # THIS SHOULD GO BEFORE PRODUCTION #
-    compiler_data = mesa.compiler_hash
     {
       sha: mesa.sha,
       compiled: mesa.installed?,
       entire: entire,
       empty: empty,
-      compiler: compiler_data['compiler'],
-      compiler_version: compiler_data['build'],
-      sdk_version: compiler_data['MESA_SDK_version'],
-      math_backend: compiler_data['math_backend']
-    }
+    }.merge(mesa.compiler_hash)
   end
 
   # Given a valid +Mesa+ object, create an array of hashes that describe the

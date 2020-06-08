@@ -36,8 +36,6 @@ class MesaTest < Thor
                   type: :boolean, default: true
   option :module, desc: 'Which module to test and/or submit, if applicable.',
                   type: :string, default: 'all', aliases: '-m'                  
-  option :log, type: :boolean, default: true, desc: 'Save yml file of test ' \
-               'results in test case directory.'
 
   def test(test_case_name=nil)
     s = if options[:submit]
@@ -195,8 +193,6 @@ class MesaTest < Thor
                   type: :string, default: 'all', aliases: '-m'
   option :destroy, type: :boolean, desc: 'Delete mesa installation upon ' \
                    'submission of complete results.', default: false
-  option :log, type: :boolean, default: true, desc: 'Save yml file of test ' \
-               'results in test case directory.'
 
   def install_and_test(sha)
     s = if options[:submit]
@@ -219,8 +215,7 @@ class MesaTest < Thor
 
       # run all tests. Don't be fooled, whether or not a diff happens is set
       # by the diff attribute of the mesa object, set above.
-      m.each_test_run_and_diff(mod: options[:module].downcase.to_sym,
-                               log_results: options[:log])
+      m.each_test_run_and_diff(mod: options[:module].downcase.to_sym)
     ensure
       # submit all commit and test data
       successfully_submitted = false

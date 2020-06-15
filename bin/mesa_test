@@ -91,7 +91,7 @@ class MesaTest < Thor
                        aliases: '-f'
   option :module, desc: 'Which module to test and/or submit, if applicable.',
                   type: :string, default: 'all', aliases: '-m'
-  option :empty, desc: 'Whether any test cases will be submitted. Useful for' +
+  option :empty, desc: 'Whether any test cases will be submitted. Useful for '+
                        'indicating compilation status independently of ' +
                        'single test submissions.', 
                  type: :boolean, default: false, aliases: '-e'

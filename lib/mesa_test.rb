@@ -368,7 +368,7 @@ class Mesa
 
   def self.checkout(sha: nil, work_dir: nil, mirror_dir: nil)
     m = Mesa.new(mesa_dir: work_dir, mirror_dir: mirror_dir)                 
-    m.checkout(sha: sha)
+    m.checkout(new_sha: sha)
     m
   end
 
@@ -387,7 +387,7 @@ class Mesa
     @shell = Thor::Shell::Color.new
   end
 
-  def checkout(sha: 'HEAD')
+  def checkout(new_sha: 'HEAD')
     # set up mirror if it doesn't exist
     unless dir_or_symlink_exists?(mirror_dir)
       shell.say "\nCreating initial mirror at #{mirror_dir}. "\
@@ -407,9 +407,14 @@ class Mesa
     # create "work" directory with proper commit
     shell.say "\nSetting up worktree repo...", :blue
     FileUtils.mkdir_p mesa_dir
-    command = "git -C #{mirror_dir} worktree add #{mesa_dir} #{sha}"
+    command = "git -C #{mirror_dir} worktree add #{mesa_dir} #{new_sha}"
     shell.say command
     bash_execute(command)
+
+    version_number_file = File.join(mesa_dir, 'data', 'version_number')
+    full_sha = git_sha
+    shell.say "Updating #{version_number_file} to #{full_sha}."
+    File.write(version_number_file, full_sha)
   end
 
   def update_mirror
@@ -433,8 +438,12 @@ class Mesa
     end
   end
 
-  def sha
+  def git_sha
     bashticks("git -C #{mesa_dir} rev-parse HEAD")
+  end
+
+  def sha
+    File.read(File.join(mesa_dir, 'data', 'version_number')).strip
   end
 
   def clean

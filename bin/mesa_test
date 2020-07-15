@@ -215,7 +215,7 @@ class MesaTest < Thor
 
       # run all tests. Don't be fooled, whether or not a diff happens is set
       # by the diff attribute of the mesa object, set above.
-      m.each_test_run_and_diff(mod: options[:module].downcase.to_sym)
+      m.each_test_run(mod: options[:module].downcase.to_sym)
     ensure
       # submit all commit and test data
       successfully_submitted = false

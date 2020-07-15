@@ -550,7 +550,7 @@ class Mesa
         each_test_run(mod: this_mod)
       end
     else
-      visit_dir(test_suite_dir(mod)) do
+      visit_dir(test_suite_dir(mod: mod)) do
         bash_execute("./each_test_run")
       end
     end

@@ -2,9 +2,10 @@
 
 # if true, submit cases to localhost:3000 and load local mesa_test library
 # rather than system version
-DEVELOPMENT_MODE = true
+MODE = :staging
 
-if DEVELOPMENT_MODE
+case MODE
+when :staging, :development
   require_relative '../lib/mesa_test'
 else
   require 'mesa_test'
@@ -15,6 +16,7 @@ require 'yaml'
 
 class MesaTest < Thor
   DEVELOPMENT_URI = 'http://localhost:3000'.freeze
+  STAGING_URI = 'https://mighty-woodland-25865.herokuapp.com'.freeze
 
   desc 'test [TEST CASE]', 'run and submit a test case or commit'
   long_desc <<-LONGDESC
@@ -252,8 +254,11 @@ class MesaTest < Thor
   end
 
   def create_submitter(force: true)
-    s = if DEVELOPMENT_MODE
+    s = case MODE
+        when :development
           MesaTestSubmitter.new_from_config(base_uri: DEVELOPMENT_URI)
+        when :staging
+          MesaTestSubmitter.new_from_config(base_uri: STAGING_URI)
         else
           MesaTestSubmitter.new_from_config
         end

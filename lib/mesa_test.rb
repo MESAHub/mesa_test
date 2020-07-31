@@ -410,11 +410,6 @@ class Mesa
     command = "git -C #{mirror_dir} worktree add #{mesa_dir} #{new_sha}"
     shell.say command
     bash_execute(command)
-
-    version_number_file = File.join(mesa_dir, 'data', 'version_number')
-    full_sha = git_sha
-    shell.say "Updating #{version_number_file} to #{full_sha}."
-    File.write(version_number_file, full_sha)
   end
 
   def update_mirror
@@ -443,7 +438,7 @@ class Mesa
   end
 
   def sha
-    File.read(File.join(mesa_dir, 'data', 'version_number')).strip
+    git_sha
   end
 
   def clean

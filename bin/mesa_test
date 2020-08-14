@@ -16,7 +16,7 @@ require 'yaml'
 
 class MesaTest < Thor
   DEVELOPMENT_URI = 'http://localhost:3000'.freeze
-  STAGING_URI = 'https://mighty-woodland-25865.herokuapp.com'.freeze
+  STAGING_URI = 'https://beta-testhub.mesastar.org'.freeze
 
   desc 'test [TEST CASE]', 'run and submit a test case or commit'
   long_desc <<-LONGDESC
@@ -37,7 +37,7 @@ class MesaTest < Thor
   option :submit, desc: 'Submit results (if any) to MesaTestHub.',
                   type: :boolean, default: true
   option :module, desc: 'Which module to test and/or submit, if applicable.',
-                  type: :string, default: 'all', aliases: '-m'                  
+                  type: :string, default: 'all', aliases: '-m'
 
   def test(test_case_name=nil)
     s = if options[:submit]

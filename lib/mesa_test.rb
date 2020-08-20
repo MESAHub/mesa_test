@@ -50,9 +50,8 @@ e-mail and password will be stored in plain text.'
       s.password = response unless response.empty?
 
       # Determine if we'll use ssh or https to access github
-      response = shell.ask "When accessing GitHub, which protocol do you '\
-        'want to use? (\"ssh\" or \"https\"):", :blue,
-        limited_to: %w[ssh https]
+      response = shell.ask 'When accessing GitHub, which protocol do you '\
+        'want to use? ', :blue, limited_to: %w[ssh https]
       s.github_protocol = response.strip.downcase.to_sym
 
       # Get location of source MESA repo (the mirror)
@@ -376,13 +375,13 @@ e-mail and password will be stored in plain text.'
 end
 
 class Mesa
-  attr_reader :mesa_dir, :mirror_dir, :names_to_numbers, :shell, 
+  attr_reader :mesa_dir, :mirror_dir, :names_to_numbers, :shell,
               :test_case_names, :test_cases, :github_protocol
 
   def self.checkout(sha: nil, work_dir: nil, mirror_dir: nil,
                     github_protocol: :ssh)
     m = Mesa.new(mesa_dir: work_dir, mirror_dir: mirror_dir,
-                 github_protocol: github_protocol)                 
+                 github_protocol: github_protocol)   
     m.checkout(new_sha: sha)
     m
   end
@@ -393,12 +392,15 @@ class Mesa
     # from
     @mesa_dir = File.absolute_path(mesa_dir)
     @mirror_dir = File.absolute_path(mirror_dir)
-    unless [:ssh, :https].include?(github_protocol)
-      raise GitHubError.new("Invalid protocol: \"#{github_protocol}\". Must "\
-        'be one of: "https", "ssh".')
-    end
-    @github_protocol = github_protocol
 
+    # don't worry about validity of github protocol until it is needed in a
+    # checkout. This way you can have garbage in there if you never really need
+    # it.
+    @github_protocol = if github_protocol.respond_to? :to_sym
+                         github_protocol.to_sym
+                       else
+                         github_protocol
+                       end
 
     # these get populated by calling #load_test_data
     @test_cases = {}
@@ -412,14 +414,14 @@ class Mesa
   def checkout(new_sha: 'HEAD')
     # before anything confirm that git-lfs has been installed
     shell.say "\nEnsuring that git-lfs is installed... ", :blue
-    command = 'git lfs help'
+    command = 'git lfs help >> /dev/null'
     if bash_execute(command)
       shell.say "yes", :green
     else
       shell.say "no", :red
-      raise GitHubError.new("The command #{command} returned with an error, "\
-                            "indicating that git-lfs is not installed. "\
-                            "Make sure it is installed and try again.")
+      raise(GitHubError, "The command #{command} returned with an error "\
+                         'status, indicating that git-lfs is not installed. '\
+                         'Make sure it is installed and try again.')
     end
 
     # set up mirror if it doesn't exist
@@ -433,20 +435,22 @@ class Mesa
         shell.say command
         # fail loudly if this doesn't work
         unless bash_execute(command)
-          raise GitHubError.new("Error while executing the following "\
-                                "command: #{command}. Perhaps you haven't "\
-                                "set up ssh keys with your GitHub account?")
+          raise(GitHubError, 'Error while executing the following command:'\
+                             "#{command}. Perhaps you haven't set up ssh "\
+                             'ssh keys with your GitHub account?')
         end
       when :https
         command = "git clone --mirror #{GITHUB_HTTPS} #{mirror_dir}"
         shell.say command
         # fail loudly if this doesn't work
         unless bash_execute(command)
-          raise GitHubError.new("Error while executing the following "\
-                                "command: #{command}. Perhaps you need to "\
-                                "configure global github account settings "\
-                                "https authentication to work properly?")
+          raise(GitHubError, 'Error while executing the following command: '\
+                             "#{command}. Perhaps you need to configure "\
+                             'global GitHub account settings for https '\
+                             'authentication to work properly?')
         end
+      else
+        raise(GitHubError, "Invalid GitHub protocol: \"#{github_protocol}\"")
       end
     end
 
@@ -460,9 +464,10 @@ class Mesa
     FileUtils.mkdir_p mesa_dir
     command = "git -C #{mirror_dir} worktree add #{mesa_dir} #{new_sha}"
     shell.say command
-    unless bash_execute(command)
-      raise GitHubError.new('Failed while executing the following command: '\
-                            "\"#{command}\".")
+    return if bash_execute(command)
+
+    raise(GitHubError, 'Failed while executing the following command: '\
+                       "\"#{command}\".")
   end
 
   def update_mirror
@@ -470,10 +475,10 @@ class Mesa
     command = "git -C #{mirror_dir} fetch origin"
     shell.say command
     # fail loudly
-    unless bash_execute(command)
-      raise GitHubError.new("Failed while executing the following command: "\
-                            "\"#{command}\".")
-    end
+    return if bash_execute(command)
+
+    raise(GitHubError, 'Failed while executing the following command: '\
+                       "\"#{command}\".")
   end
 
   def remove
@@ -482,13 +487,14 @@ class Mesa
               :blue
     command = "git -C #{mirror_dir} worktree remove --force #{mesa_dir}"
     shell.say command
-    unless bash_execute(command)
-      shell.say "Failed. Simply trying to remove the directory.", :red
-      command = "rm -rf #{mesa_dir}"
-      shell.say command
-      # fail loudly and raise an exception
-      bash_execute(command, true)
-    end
+    return if bash_execute(command)
+
+    shell.say "Failed. Simply trying to remove the directory.", :red
+    command = "rm -rf #{mesa_dir}"
+    shell.say command
+    # fail loudly (the "true" tells bash_execute to raise an exception if
+    # the command fails)
+    bash_execute(command, true)
   end
 
   def git_sha
@@ -527,10 +533,10 @@ class Mesa
 
   # throw an error unless it seems like it's properly compiled
   def check_installation
-    unless installed?
-      raise MesaDirError, 'Installation check failed (build.log doesn\'t '\
-                          'show a successful installation).'
-    end
+    return if installed?
+
+    raise MesaDirError, 'Installation check failed (build.log doesn\'t '\
+                        'show a successful installation).'
   end
 
   # sourced from $MESA_DIR/testhub.yml, which should be created after
@@ -538,8 +544,9 @@ class Mesa
   def compiler_hash
     data_file = File.join(mesa_dir, 'testhub.yml')
     unless File.exist? data_file
-      raise MesaDirError.new("Could not find file testhub.yml in #{mesa_dir}.")
+      raise(MesaDirError, "Could not find file testhub.yml in #{mesa_dir}.")
     end
+
     res = YAML.safe_load(File.read(data_file))
     # currently version_number is reported, but we don't need that in Git land
     res.delete('version_number') # returns the value, not the updated hash
@@ -550,6 +557,7 @@ class Mesa
 
   def check_mod(mod)
     return if MesaTestCase.modules.include? mod
+
     raise TestCaseDirError, "Invalid module: #{mod}. Must be one of: " +
                             MesaTestCase.modules.join(', ')
   end
@@ -613,7 +621,7 @@ class Mesa
       end
     else
       visit_dir(test_suite_dir(mod: mod)) do
-        bash_execute("./each_test_run")
+        bash_execute('./each_test_run')
       end
     end
   end
@@ -626,9 +634,9 @@ class Mesa
     # assume build log reflects installation status; does not account for
     # mucking with modules after the fact
     downloaded? && File.read(File.join(mesa_dir, 'build.log')).include?(
-      'MESA installation was successful')
+      'MESA installation was successful'
+    )
   end
-
 
   private
 
@@ -663,8 +671,8 @@ class Mesa
     if mod == :all
       # build up list by first constructing each modules list and then
       # concatenating them
-      res = MesaTestCase.modules.inject([]) do |res, mod|
-        res += all_names_ordered(mod: mod)
+      MesaTestCase.modules.inject([]) do |res, this_mod|
+        res += all_names_ordered(mod: this_mod)
       end
     else
       check_mod mod
@@ -688,23 +696,23 @@ class Mesa
       when 1
         # it exists in exactly one module, but we need to find the module
         # and then return the +MesaTestCase+ object
-        MesaTestCase.modules.each do |mod|
-          if @test_case_names[mod].include? test_case_name
+        MesaTestCase.modules.each do |this_mod|
+          if @test_case_names[this_mod].include? test_case_name
             # found it, return the appropriate object
-            return @test_cases[mod][test_case_name]
+            return @test_cases[this_mod][test_case_name]
           end
         end
-        raise "Weird problem: found test case in overall names, but "\
+        raise 'Weird problem: found test case in overall names, but '\
           "not in any particular module. This shouldn't happen."
       when 0
-        raise TestCaseDirError.new('Could not find test case ' \
-          "#{test_case_name} in any module.")
+        raise(TestCaseDirError, "Could not find test case #{test_case_name} "\
+                                'in any module.')
       else
-        raise TestCaseDirError.new('Found multiple test cases named '\
+        raise(TestCaseDirError, 'Found multiple test cases named '\
           "#{test_case_name} in multiple modules. Indicate the module you "\
           'want to search.')
       end
-        # append this array to the end of the exisitng one
+      # append this array to the end of the exisitng one
     else
       # module specified; check it and return the proper test case (may be nil
       # if the test case doesn't exist)

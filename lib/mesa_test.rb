@@ -11,8 +11,11 @@ require 'json'
 MesaDirError = Class.new(StandardError)
 TestCaseDirError = Class.new(StandardError)
 InvalidDataType = Class.new(StandardError)
+GitHubError = Class.new(StandardError)
 
 DEFAULT_REVISION = 10_000
+GITHUB_HTTPS = 'https://github.com/MESAHub/mesa-sandbox-lfs.git'.freeze
+GITHUB_SSH = 'git@github.com:MESAHub/mesa-sandbox-lfs.git'.freeze
 
 class MesaTestSubmitter
   DEFAULT_URI = 'https://mesa-test-hub.herokuapp.com'.freeze
@@ -45,6 +48,12 @@ e-mail and password will be stored in plain text.'
       response = shell.ask 'What is the password associated with the email ' \
         "#{s.email} (required)? (#{s.password})", :blue
       s.password = response unless response.empty?
+
+      # Determine if we'll use ssh or https to access github
+      response = shell.ask "When accessing GitHub, which protocol do you '\
+        'want to use? (\"ssh\" or \"https\"):", :blue,
+        limited_to: %w[ssh https]
+      s.github_protocol = response.strip.downcase.to_sym
 
       # Get location of source MESA repo (the mirror)
       response = shell.ask "Where is/should your mirrored MESA repository " \
@@ -101,21 +110,22 @@ e-mail and password will be stored in plain text.'
 
   attr_accessor :computer_name, :user_name, :email, :password, :platform,
                 :mesa_mirror, :mesa_work, :platform_version, :processor,
-                :config_file, :base_uri, :last_tested
+                :config_file, :base_uri, :last_tested, :github_protocol
 
   attr_reader :shell
 
   # many defaults are set in body
   def initialize(
-      computer_name: nil, user_name: nil, email: nil, mesa_mirror: nil,
-      platform: nil, platform_version: nil, processor: nil, config_file: nil,
-      base_uri: nil, last_tested: nil
+      computer_name: nil, user_name: nil, email: nil, github_protocol: nil,
+      mesa_mirror: nil, platform: nil, platform_version: nil, processor: nil,
+      config_file: nil, base_uri: nil, last_tested: nil
   )
     @computer_name = computer_name || Socket.gethostname.scan(/^[^\.]+\.?/)[0]
     @computer_name.chomp!('.') if @computer_name
     @user_name = user_name || (ENV['USER'] || ENV['USERNAME'])
     @email = email || ''
     @password = password || ''
+    @github_protocol = github_protocol || :ssh
     @mesa_mirror = mesa_mirror ||
       File.join(ENV['HOME'], '.mesa_test', 'mirror')
     @mesa_work = mesa_work ||
@@ -157,6 +167,7 @@ e-mail and password will be stored in plain text.'
     puts "Computer Name           #{computer_name}"
     puts "User email              #{email}"
     puts 'Password                ***********'
+    puts "GitHub Protocol         #{github_protocol}"
     puts "MESA Mirror Location    #{mesa_mirror}"
     puts "MESA Work Location      #{mesa_work}"
     puts "Platform                #{platform} #{platform_version}"
@@ -178,6 +189,7 @@ e-mail and password will be stored in plain text.'
       'computer_name' => computer_name,
       'email' => email,
       'password' => password,
+      'github_protocol' => github_protocol,
       'mesa_mirror' => mesa_mirror,
       'mesa_work' => mesa_work,
       'platform' => platform,
@@ -195,6 +207,7 @@ e-mail and password will be stored in plain text.'
     @computer_name = data_hash['computer_name']
     @email = data_hash['email']
     @password = data_hash['password']
+    @github_protocol = data_hash['github_protocol'].to_sym
     @mesa_mirror = data_hash['mesa_mirror']
     @mesa_work = data_hash['mesa_work']
     @platform = data_hash['platform']
@@ -364,19 +377,28 @@ end
 
 class Mesa
   attr_reader :mesa_dir, :mirror_dir, :names_to_numbers, :shell, 
-              :test_case_names, :test_cases
+              :test_case_names, :test_cases, :github_protocol
 
-  def self.checkout(sha: nil, work_dir: nil, mirror_dir: nil)
-    m = Mesa.new(mesa_dir: work_dir, mirror_dir: mirror_dir)                 
+  def self.checkout(sha: nil, work_dir: nil, mirror_dir: nil,
+                    github_protocol: :ssh)
+    m = Mesa.new(mesa_dir: work_dir, mirror_dir: mirror_dir,
+                 github_protocol: github_protocol)                 
     m.checkout(new_sha: sha)
     m
   end
 
-  def initialize(mesa_dir: ENV['MESA_DIR'], mirror_dir: nil)
+  def initialize(mesa_dir: ENV['MESA_DIR'], mirror_dir: nil,
+                 github_protocol: :ssh)
     # absolute_path ensures that it doesn't matter where commands are executed
     # from
     @mesa_dir = File.absolute_path(mesa_dir)
     @mirror_dir = File.absolute_path(mirror_dir)
+    unless [:ssh, :https].include?(github_protocol)
+      raise GitHubError.new("Invalid protocol: \"#{github_protocol}\". Must "\
+        'be one of: "https", "ssh".')
+    end
+    @github_protocol = github_protocol
+
 
     # these get populated by calling #load_test_data
     @test_cases = {}
@@ -388,15 +410,44 @@ class Mesa
   end
 
   def checkout(new_sha: 'HEAD')
+    # before anything confirm that git-lfs has been installed
+    shell.say "\nEnsuring that git-lfs is installed... ", :blue
+    command = 'git lfs help'
+    if bash_execute(command)
+      shell.say "yes", :green
+    else
+      shell.say "no", :red
+      raise GitHubError.new("The command #{command} returned with an error, "\
+                            "indicating that git-lfs is not installed. "\
+                            "Make sure it is installed and try again.")
+    end
+
     # set up mirror if it doesn't exist
     unless dir_or_symlink_exists?(mirror_dir)
       shell.say "\nCreating initial mirror at #{mirror_dir}. "\
                 'This might take awhile...', :blue
       FileUtils.mkdir_p mirror_dir
-      command = 'git clone --mirror https://github.com/MESAHub/mesa-sandbox'\
-                "-lfs.git #{mirror_dir}"
-      shell.say command
-      bash_execute(command)
+      case github_protcol
+      when :ssh
+        command = "git clone --mirror #{GITHUB_SSH} #{mirror_dir}"
+        shell.say command
+        # fail loudly if this doesn't work
+        unless bash_execute(command)
+          raise GitHubError.new("Error while executing the following "\
+                                "command: #{command}. Perhaps you haven't "\
+                                "set up ssh keys with your GitHub account?")
+        end
+      when :https
+        command = "git clone --mirror #{GITHUB_HTTPS} #{mirror_dir}"
+        shell.say command
+        # fail loudly if this doesn't work
+        unless bash_execute(command)
+          raise GitHubError.new("Error while executing the following "\
+                                "command: #{command}. Perhaps you need to "\
+                                "configure global github account settings "\
+                                "https authentication to work properly?")
+        end
+      end
     end
 
     update_mirror
@@ -409,14 +460,20 @@ class Mesa
     FileUtils.mkdir_p mesa_dir
     command = "git -C #{mirror_dir} worktree add #{mesa_dir} #{new_sha}"
     shell.say command
-    bash_execute(command)
+    unless bash_execute(command)
+      raise GitHubError.new('Failed while executing the following command: '\
+                            "\"#{command}\".")
   end
 
   def update_mirror
     shell.say "\nFetching MESA history...", :blue
     command = "git -C #{mirror_dir} fetch origin"
     shell.say command
-    bash_execute(command)
+    # fail loudly
+    unless bash_execute(command)
+      raise GitHubError.new("Failed while executing the following command: "\
+                            "\"#{command}\".")
+    end
   end
 
   def remove
@@ -429,7 +486,8 @@ class Mesa
       shell.say "Failed. Simply trying to remove the directory.", :red
       command = "rm -rf #{mesa_dir}"
       shell.say command
-      bash_execute(command)
+      # fail loudly and raise an exception
+      bash_execute(command, true)
     end
   end
 
@@ -840,8 +898,13 @@ def dir_or_symlink_exists?(path)
 end
 
 # force the execution to happen with bash
-def bash_execute(command)
-  system('bash -c "' + command + '"')
+def bash_execute(command, throw_exception=false)
+  res = system('bash -c "' + command + '"')
+  if !res && throw_exception
+    raise BashError('Encountered an error when executing the following '\
+      "command in bash: #{command}.")
+  end
+  res
 end
 
 # force execution to happen with bash, but return result rather than exit

@@ -435,6 +435,13 @@ class Mesa
         shell.say command
         # fail loudly if this doesn't work
         unless bash_execute(command)
+          # nuke the mirror directory since it is probably bogus (make this
+          # code fire off the next time checkout is done)
+          shell.say "Failed. Removing the [potentially corrupted] mirror.", :red
+          command = "rm -rf #{mirror_dir}"
+          shell.say command
+          bash_execute(command)
+
           raise(GitHubError, 'Error while executing the following command:'\
                              "#{command}. Perhaps you haven't set up ssh "\
                              'ssh keys with your GitHub account?')
@@ -444,6 +451,13 @@ class Mesa
         shell.say command
         # fail loudly if this doesn't work
         unless bash_execute(command)
+          # nuke the mirror directory since it is probably bogus (make this
+          # code fire off the next time checkout is done)
+          shell.say "Failed. Removing the [potentially corrupted] mirror.", :red
+          command = "rm -rf #{mirror_dir}"
+          shell.say command
+          bash_execute(command)
+
           raise(GitHubError, 'Error while executing the following command: '\
                              "#{command}. Perhaps you need to configure "\
                              'global GitHub account settings for https '\

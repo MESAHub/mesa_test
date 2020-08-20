@@ -429,7 +429,7 @@ class Mesa
       shell.say "\nCreating initial mirror at #{mirror_dir}. "\
                 'This might take awhile...', :blue
       FileUtils.mkdir_p mirror_dir
-      case github_protcol
+      case github_protocol
       when :ssh
         command = "git clone --mirror #{GITHUB_SSH} #{mirror_dir}"
         shell.say command

@@ -414,7 +414,7 @@ class Mesa
   def checkout(new_sha: 'HEAD')
     # before anything confirm that git-lfs has been installed
     shell.say "\nEnsuring that git-lfs is installed... ", :blue
-    command = 'git lfs help >> /dev/null'
+    command = 'git lfs help >> /dev/null 2>&1'
     if bash_execute(command)
       shell.say "yes", :green
     else

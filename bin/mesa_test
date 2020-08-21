@@ -16,7 +16,7 @@ require 'yaml'
 
 class MesaTest < Thor
   DEVELOPMENT_URI = 'http://localhost:3000'.freeze
-  STAGING_URI = 'https://beta-testhub.mesastar.org'.freeze
+  STAGING_URI = 'https://beta-testhub.herokuapp.com'.freeze
 
   desc 'test [TEST CASE]', 'run and submit a test case or commit'
   long_desc <<-LONGDESC
@@ -30,24 +30,29 @@ class MesaTest < Thor
     #{MesaTestCase.modules.map { |mod| '    ' + mod.to_s }.join(', ')}
   LONGDESC
 
-  option :force, desc: 'When submitting, assume submission data in ' +
-                       '~/.mesa_test.yml are correct rather than checking ' +
-                       'with user.', type: :boolean, default: true,
-                       aliases: '-f'
+  option :force, desc: 'When submitting, assume submission data in ' \
+                       '~/.mesa_test.yml are correct rather than checking ' \
+                       'with user.',
+                 type: :boolean, default: true, aliases: '-f'
   option :submit, desc: 'Submit results (if any) to MesaTestHub.',
                   type: :boolean, default: true
   option :module, desc: 'Which module to test and/or submit, if applicable.',
                   type: :string, default: 'all', aliases: '-m'
+  option :mesadir, desc: 'Location of mesa dir, if not relying on config data',
+                   type: :string
 
-  def test(test_case_name=nil)
+  def test(test_case_name = nil)
     s = if options[:submit]
-          create_and_check_submitter(force: options[:force]) 
+          create_and_check_submitter(force: options[:force])
         else
           create_submitter(force: options[:force])
         end
-    m = create_and_check_mesa(mesa_dir: s.mesa_work, mirror_dir: s.mesa_mirror,
-                              mod: options[:module].downcase.to_sym,
-                              github_protocol: s.github_protocol)
+    m = create_and_check_mesa(
+      mesa_dir: work_dir(options[:mesadir], s.mesa_work),
+      mirror_dir: s.mesa_mirror,
+      mod: options[:module].downcase.to_sym,
+      github_protocol: s.github_protocol
+    )
     if test_case_name
       # only testing one test case
       t = create_and_check_test_case(mesa: m, test_case_name: test_case_name,
@@ -88,27 +93,32 @@ class MesaTest < Thor
     #{MesaTestCase.modules.map { |mod| '    ' + mod.to_s }.join(', ')}
   LONGDESC
 
-  option :force, desc: 'When submitting, assume submission data in ' +
-                       '~/.mesa_test.yml are correct rather than checking ' +
-                       'with user.', type: :boolean, default: true,
-                       aliases: '-f'
+  option :force, desc: 'When submitting, assume submission data in ' \
+                       '~/.mesa_test.yml are correct rather than checking ' \
+                       'with user.',
+                 type: :boolean, default: true, aliases: '-f'
   option :module, desc: 'Which module to test and/or submit, if applicable.',
                   type: :string, default: 'all', aliases: '-m'
-  option :empty, desc: 'Whether any test cases will be submitted. Useful for '+
-                       'indicating compilation status independently of ' +
-                       'single test submissions.', 
+  option :empty, desc: 'Whether any test cases will be submitted. Useful for '\
+                       'indicating compilation status independently of ' \
+                       'single test submissions.',
                  type: :boolean, default: false, aliases: '-e'
-  
-  def submit(test_case_name=nil)
+  option :mesadir, desc: 'Location of mesa dir, if not relying on config data',
+                   type: :string
+
+  def submit(test_case_name = nil)
     s = create_and_check_submitter(force: options[:force])
-    m = create_and_check_mesa(mesa_dir: s.mesa_work, mirror_dir: s.mesa_mirror,
-                              mod: options[:module].downcase.to_sym,
-                              github_protocol: s.github_protocol)
+    m = create_and_check_mesa(
+      mesa_dir: work_dir(options[:mesadir], s.mesa_work),
+      mirror_dir: s.mesa_mirror,
+      mod: options[:module].downcase.to_sym,
+      github_protocol: s.github_protocol
+    )
     empty = options[:empty]
 
     # default value for now; might change to false if we have a bad
     # installation or if a test case is specified
-    
+
     if test_case_name
       # just submitting one test case.
       # this is not an empty submission since there is one test case (the
@@ -121,7 +131,7 @@ class MesaTest < Thor
       s.submit_instance(m, t)
       shell.say "Done.\n", :green
     else
-      # submitting compilation information and either all tests (entire) or 
+      # submitting compilation information and either all tests (entire) or
       # no tests (empty)
       begin
         m.check_installation
@@ -139,21 +149,23 @@ class MesaTest < Thor
   desc 'checkout SHA', 'checkout a commit'
   long_desc <<-LONGDESC
   Checks out a particular commit to default mesa directory (mesa_work in 
-  .mesa_test.yml). Uses git worktree magic to avoid re-downloading all of mesa
-  history if a mirror repo is already set up. Does not affect the user's
-  MESA_DIR or other environment variables.
+  .mesa_test.yml). Uses git worktree magic to avoid re-downloading all of
+  mesa history if a mirror repo is already set up. Does not affect the
+  user's MESA_DIR or other environment variables.
   LONGDESC
+
+  option :mesadir, desc: 'Location of mesa dir, if not relying on config data',
+                   type: :string
+
   def checkout(sha)
     # assuming config wizard has already been set (perhaps a little reckless)
     # so that we can get at the work directory and mirror directory
     s = create_submitter(force: true)
-    Mesa.checkout(sha: sha, work_dir: s.mesa_work, mirror_dir: s.mesa_mirror,
+    Mesa.checkout(sha: sha,
+                  work_dir: work_dir(options[:mesadir], s.mesa_work),
+                  mirror_dir: s.mesa_mirror,
                   github_protocol: s.github_protocol)
   end
-
-  option :checkout, desc: 'Whether a checkout needs to happen. Use '\
-                          '--no-checkout if you already ran checkout.',
-                    type: :boolean, default: true, aliases: '-c'
 
   desc 'install [SHA]', 'checkout and install a commit'
   long_desc <<-LONGDESC
@@ -168,19 +180,31 @@ class MesaTest < Thor
   If no sha is provided, defaults to master (if checkout is occuring). SHA is
   ignored if using option --no-checkout
   LONGDESC
-  def install(sha='master')
+
+  option :checkout, desc: 'Whether a checkout needs to happen. Use '\
+                          '--no-checkout if you already ran checkout.',
+                    type: :boolean, default: true, aliases: '-c'
+  option :mesadir, desc: 'Location of mesa dir, if not relying on config data',
+                   type: :string
+
+  def install(sha = 'master')
     # assuming config wizard has already been set (perhaps a little reckless)
     # so that we can get at the work directory and mirror directory
     s = create_submitter(force: true)
     m = if options[:checkout]
-          Mesa.checkout(sha: sha, work_dir: s.mesa_work,
-                        mirror_dir: s.mesa_mirror,
-                        github_protocol: s.github_protocol)
+          Mesa.checkout(
+            sha: sha,
+            work_dir: work_dir(options[:mesadir], s.mesa_work),
+            mirror_dir: s.mesa_mirror,
+            github_protocol: s.github_protocol
+          )
         else
-          create_and_check_mesa(mesa_dir: s.mesa_work,
-                                mirror_dir: s.mesa_mirror,
-                                mod: :all,
-                                github_protocol: s.github_protocol)
+          create_and_check_mesa(
+            mesa_dir: work_dir(options[:mesadir], s.mesa_work),
+            mirror_dir: s.mesa_mirror,
+            mod: :all,
+            github_protocol: s.github_protocol
+          )
         end
     m.clean
     m.install
@@ -207,16 +231,12 @@ class MesaTest < Thor
   option :checkout, desc: 'Whether a checkout needs to happen. Use '\
                           '--no-checkout if you already ran checkout.',
                     type: :boolean, default: true, aliases: '-c'
-  option :workdir, desc: 'Where to install/look for mesa directory. Default '\
-                         'behavior is to use the location specified in config'\
-                         ' file, but if you will have multiple commits tested'\
-                         ' simultaneously, you should specify different'\
-                         'locations for each one using this option.',
-                   type: :string, aliases: '-w'
-  option :force, desc: 'When submitting, assume submission data in ' +
-                       '~/.mesa_test.yml are correct rather than checking ' +
-                       'with user.', type: :boolean, default: true,
-                       aliases: '-f'
+  option :mesadir, desc: 'Location of mesa dir, if not relying on config data',
+                   type: :string
+  option :force, desc: 'When submitting, assume submission data in ' \
+                       '~/.mesa_test.yml are correct rather than checking ' \
+                       'with user.',
+                 type: :boolean, default: true, aliases: '-f'
   option :submit, desc: 'Submit results (if any) to MesaTestHub.',
                   type: :boolean, default: true
   option :module, desc: 'Which module to test and/or submit, if applicable.',
@@ -234,14 +254,19 @@ class MesaTest < Thor
         end
 
     m = if options[:checkout]
-          Mesa.checkout(sha: sha, work_dir: s.mesa_work,
-                        mirror_dir: s.mesa_mirror,
-                        github_protocol: s.github_protocol)
+          Mesa.checkout(
+            sha: sha,
+            work_dir: work_dir(options[:mesadir], s.mesa_work),
+            mirror_dir: s.mesa_mirror,
+            github_protocol: s.github_protocol
+          )
         else
-          create_and_check_mesa(mesa_dir: s.mesa_work,
-                                mirror_dir: s.mesa_mirror,
-                                mod: options[:module].to_sym
-                                github_protocol: s.github_protocol)
+          create_and_check_mesa(
+            mesa_dir: work_dir(options[:mesadir], s.mesa_work),
+            mirror_dir: s.mesa_mirror,
+            mod: options[:module].to_sym,
+            github_protocol: s.github_protocol
+          )
         end
 
     begin
@@ -265,7 +290,7 @@ class MesaTest < Thor
       # directory
       m.remove if successfully_submitted && options[:destroy] && m.installed?
     end
-  end  
+  end
 
   desc 'setup [CONFIG_FILE]', 'Setup MesaTestHub config file.'
   long_desc <<-LONGDESC
@@ -280,6 +305,14 @@ class MesaTest < Thor
   end
 
   private
+
+  def work_dir(given, default)
+    if given
+      File.expand_path('', given)
+    else
+      default
+    end
+  end
 
   def check_user_and_computer(submitter)
     computer_check = submitter.confirm_computer
@@ -321,10 +354,10 @@ class MesaTest < Thor
   end
 
   def check_mesa(mesa)
-    unless mesa.downloaded?
-      raise MesaDirError, "Invalid MESA_DIR: #{mesa.mesa_dir}. Please "\
+    return if mesa.downloaded?
+
+    raise MesaDirError, "Invalid MESA_DIR: #{mesa.mesa_dir}. Please "\
       'download and install a valid MESA version or provide the path to one.'
-    end
   end
 
   def update_mesa(mesa:, mod: :all)
@@ -336,6 +369,7 @@ class MesaTest < Thor
     t = mesa.find_test_case(test_case_name: test_case_name, mod: mod)
     # return test case if it was found
     return t unless t.nil?
+
     # test case was not found. Throw an error.
     msg = "No such test case, #{test_case_name} found in any of "
     # this should care about the value in `mod`. Current behavior is only

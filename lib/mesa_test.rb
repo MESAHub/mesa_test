@@ -13,7 +13,6 @@ TestCaseDirError = Class.new(StandardError)
 InvalidDataType = Class.new(StandardError)
 GitHubError = Class.new(StandardError)
 
-DEFAULT_REVISION = 10_000
 GITHUB_HTTPS = 'https://github.com/MESAHub/mesa.git'.freeze
 GITHUB_SSH = 'git@github.com:MESAHub/mesa.git'.freeze
 
@@ -145,7 +144,6 @@ e-mail and password will be stored in plain text.'
     @config_file = config_file || File.join(ENV['HOME'], '.mesa_test',
                                             'config.yml')
     @base_uri = base_uri
-    @last_tested = last_tested || DEFAULT_REVISION
 
     # set up thor-proof way to get responses from user. Thor hijacks the
     # gets command, so we have to use its built-in "ask" method, which is

@@ -11,4 +11,4 @@ Then learn about the available commands via
     
 For an individual command, call `help` with an argument:
 
-    mesa_test help test_one
+    mesa_test help install

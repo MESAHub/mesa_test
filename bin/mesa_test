@@ -2,7 +2,7 @@
 
 # if true, submit cases to localhost:3000 and load local mesa_test library
 # rather than system version
-MODE = :staging
+MODE = :production
 
 case MODE
 when :staging, :development

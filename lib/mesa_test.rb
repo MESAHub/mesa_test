@@ -441,7 +441,7 @@ class Mesa
           bash_execute(command)
 
           raise(GitHubError, 'Error while executing the following command:'\
-                             "#{command}. Perhaps you haven't set up ssh "\
+                             "#{command}. Perhaps you haven't set up "\
                              'ssh keys with your GitHub account?')
         end
       when :https

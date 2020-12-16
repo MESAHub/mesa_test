@@ -14,8 +14,8 @@ InvalidDataType = Class.new(StandardError)
 GitHubError = Class.new(StandardError)
 
 DEFAULT_REVISION = 10_000
-GITHUB_HTTPS = 'https://github.com/MESAHub/mesa-sandbox-lfs.git'.freeze
-GITHUB_SSH = 'git@github.com:MESAHub/mesa-sandbox-lfs.git'.freeze
+GITHUB_HTTPS = 'https://github.com/MESAHub/mesa.git'.freeze
+GITHUB_SSH = 'git@github.com:MESAHub/mesa.git'.freeze
 
 class MesaTestSubmitter
   DEFAULT_URI = 'https://mesa-test-hub.herokuapp.com'.freeze

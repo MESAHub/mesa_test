@@ -1,7 +1,9 @@
 #! /usr/bin/env ruby
 
-# if true, submit cases to localhost:3000 and load local mesa_test library
-# rather than system version
+# if :development, submit cases to localhost:3000 and load local mesa_test library
+# rather than system version and run out of local lib, not installed
+# if :staging, submit to beta version and run out of local lib, not installed
+# anything else: trust rubygems to get lib and submit to real deal testhub
 MODE = :production
 
 case MODE

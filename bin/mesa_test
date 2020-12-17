@@ -69,7 +69,6 @@ class MesaTest < Thor
       # submit results
       shell.say 'Submitting results to ' + s.base_uri + '... ', :blue
       s.submit_instance(m, t)
-      shell.say "Done.\n", :green
     else
       # run all tests
       m.each_test_run(mod: options[:module].downcase.to_sym)
@@ -79,8 +78,8 @@ class MesaTest < Thor
 
       shell.say 'Submitting results to ' + s.base_uri + '... ', :blue
       s.submit_commit(m)
-      shell.say "Done.\n", :green
     end
+    shell.say "Done.\n", :green
   end
 
   desc 'submit [TEST CASE]', 'submit a test case or commit'
@@ -148,18 +147,20 @@ class MesaTest < Thor
     end
   end
 
-  desc 'checkout SHA', 'checkout a commit'
+  desc 'checkout [SHA]', 'checkout a commit'
   long_desc <<-LONGDESC
   Checks out a particular commit to default mesa directory (mesa_work in 
   .mesa_test.yml). Uses git worktree magic to avoid re-downloading all of
   mesa history if a mirror repo is already set up. Does not affect the
   user's MESA_DIR or other environment variables.
+
+  If no sha is provided, defaults to main (if checkout is occuring).
   LONGDESC
 
   option :mesadir, desc: 'Location of mesa dir, if not relying on config data',
                    type: :string
 
-  def checkout(sha)
+  def checkout(sha = 'main')
     # assuming config wizard has already been set (perhaps a little reckless)
     # so that we can get at the work directory and mirror directory
     s = create_submitter(force: true)
@@ -179,7 +180,7 @@ class MesaTest < Thor
   set up prior. Does not affect the user's MESA_DIR or other environment
   variables outside of execution.
 
-  If no sha is provided, defaults to master (if checkout is occuring). SHA is
+  If no sha is provided, defaults to main (if checkout is occuring). SHA is
   ignored if using option --no-checkout
   LONGDESC
 
@@ -189,7 +190,7 @@ class MesaTest < Thor
   option :mesadir, desc: 'Location of mesa dir, if not relying on config data',
                    type: :string
 
-  def install(sha = 'master')
+  def install(sha = 'main')
     # assuming config wizard has already been set (perhaps a little reckless)
     # so that we can get at the work directory and mirror directory
     s = create_submitter(force: true)
@@ -228,6 +229,10 @@ class MesaTest < Thor
   followed by
 
     `mesa_test test`
+
+  If no sha is provided, defaults to main (if checkout is occuring). SHA is
+  ignored if using option --no-checkout
+
   LONGDESC
 
   option :checkout, desc: 'Whether a checkout needs to happen. Use '\
@@ -246,7 +251,7 @@ class MesaTest < Thor
   option :destroy, type: :boolean, desc: 'Delete mesa installation upon ' \
                    'submission of complete results.', default: false
 
-  def install_and_test(sha)
+  def install_and_test(sha='main')
     s = if options[:submit]
           create_and_check_submitter(force: options[:force])
         else

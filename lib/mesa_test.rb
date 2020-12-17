@@ -75,10 +75,12 @@ e-mail and password will be stored in plain text.'
         "Ubuntu 16.04)? (#{s.platform_version}):", :blue
       s.platform_version = response unless response.empty?
 
-      # Confirm save location
-      response = shell.ask "This will be saved in #{s.config_file}. Press " \
-        'enter to accept or enter a new location:', :blue, path: true
-      s.config_file = response unless response.empty?
+      # we are powerless to do change the location for now, so stop asking
+      # about it
+      # # Confirm save location
+      # response = shell.ask "This will be saved in #{s.config_file}. Press " \
+      #   'enter to accept or enter a new location:', :blue, path: true
+      # s.config_file = response unless response.empty?
     end
 
     # Confirm data. If not confirmed, restart whole wizard.
@@ -168,7 +170,7 @@ e-mail and password will be stored in plain text.'
     puts "MESA Mirror Location    #{mesa_mirror}"
     puts "MESA Work Location      #{mesa_work}"
     puts "Platform                #{platform} #{platform_version}"
-    puts "Config location         #{config_file}"
+    # puts "Config location         #{config_file}"
     puts '-------------------------------------------------------'
     puts ''
     response = shell.ask 'Is this correct? (y/Y = Yes, anything else = No):'

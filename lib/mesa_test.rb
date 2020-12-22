@@ -289,7 +289,7 @@ e-mail and password will be stored in plain text.'
     https.use_ssl = base_uri.include? 'https'
 
     request = Net::HTTP::Post.new(
-      uri, initheader = { 'Content-Type' => 'application/json' }
+      uri, initheader = { 'Accept' => 'application/json', 'Content-Type' => 'application/json' }
     )
     request.body = {
       email: email,
@@ -308,7 +308,7 @@ e-mail and password will be stored in plain text.'
 
     request = Net::HTTP::Post.new(
       uri,
-      initheader = { 'Content-Type' => 'application/json' }
+      initheader = { 'Accept' => 'application/json', 'Content-Type' => 'application/json' }
     )
 
     # create the request body for submission to the submissions API
@@ -347,7 +347,7 @@ e-mail and password will be stored in plain text.'
 
     request = Net::HTTP::Post.new(
       uri,
-      initheader = { 'Content-Type' => 'application/json' }
+      initheader = { 'Accept' => 'application/json', 'Content-Type' => 'application/json' }
     )
 
     # create the request body for submission to the submissions API

@@ -302,6 +302,10 @@ e-mail and password will be stored in plain text.'
   # submit entire commit's worth of test cases, OR submit compilation status
   # and NO test cases
   def submit_commit(mesa, empty: false)
+    unless mesa.install_attempted?
+      raise MesaDirError, 'No testhub.yml file found in installation; '\
+                          'must attempt to install before subitting.'
+    end
     uri = URI.parse(base_uri + '/submissions/create.json')
     https = Net::HTTP.new(uri.hostname, uri.port)
     https.use_ssl = true if base_uri.include? 'https'
@@ -341,6 +345,11 @@ e-mail and password will be stored in plain text.'
   # submit results for a single test case instance. Does *not* report overall
   # compilation status to testhub. Use an empty commit submission for that
   def submit_instance(mesa, test_case)
+    unless mesa.install_attempted?
+      raise MesaDirError, 'No testhub.yml file found in installation; '\
+                          'must attempt to install before subitting.'
+    end
+
     uri = URI.parse(base_uri + '/submissions/create.json')
     https = Net::HTTP.new(uri.hostname, uri.port)
     https.use_ssl = true if base_uri.include? 'https'
@@ -557,14 +566,17 @@ class Mesa
   # installation
   def compiler_hash
     data_file = File.join(mesa_dir, 'testhub.yml')
-    unless File.exist? data_file
-      raise(MesaDirError, "Could not find file testhub.yml in #{mesa_dir}.")
+    res = {
+            compiler: 'Unknown',
+            sdk_version: 'Unknown',
+            math_backend: 'Unknown'
+          }
+    if File.exist? data_file
+      res = res.merge(YAML.safe_load(File.read(data_file)) || {})
+      # currently version_number is reported, but we don't need that in Git land
+      res.delete('version_number') # returns the value, not the updated hash
+      res
     end
-
-    res = YAML.safe_load(File.read(data_file))
-    # currently version_number is reported, but we don't need that in Git land
-    res.delete('version_number') # returns the value, not the updated hash
-    res
   end
 
   ## TEST SUITE METHODS
@@ -647,9 +659,14 @@ class Mesa
   def installed?
     # assume build log reflects installation status; does not account for
     # mucking with modules after the fact
-    downloaded? && File.read(File.join(mesa_dir, 'build.log')).include?(
+    build_log = File.join(mesa_dir, 'build.log')
+    downloaded? && File.exist?(build_log) && File.read(build_log).include?(
       'MESA installation was successful'
     )
+  end
+
+  def install_attempted?
+    File.exist? File.join(mesa_dir, 'testhub.yml')
   end
 
   private

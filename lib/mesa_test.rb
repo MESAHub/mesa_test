@@ -614,12 +614,16 @@ class Mesa
           num, tc_name = line.strip.split
           @names_to_numbers[mod][tc_name.strip] = num.to_i
           @test_case_names[mod] << tc_name.strip
-          @test_cases[mod][tc_name.strip] = MesaTestCase.new(
-            test: tc_name.strip,
-            mod: mod,
-            position: num.to_i,
-            mesa: self
-          )
+          begin
+            @test_cases[mod][tc_name.strip] = MesaTestCase.new(
+              test: tc_name.strip,
+              mod: mod,
+              position: num.to_i,
+              mesa: self
+            )
+          rescue TestCaseDirError
+            shell.say "No such test case #{tc_name.strip}. Skipping loading it.", :red
+          end
         end
       end
     end

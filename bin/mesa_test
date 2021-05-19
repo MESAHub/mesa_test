@@ -138,7 +138,8 @@ class MesaTest < Thor
         m.check_installation
       rescue MesaDirError
         shell.say %q{This MESA installation doesn't seem to be compiled } \
-          'properly. Submitting a compilation failure to MESATestHub.', :red
+          'properly. Attempting to submit a compilation failure to '\
+          'MESATestHub.', :red
         empty = true
       ensure
         # submit all tests

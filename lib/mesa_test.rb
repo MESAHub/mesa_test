@@ -7,6 +7,7 @@ require 'net/http'
 require 'net/https'
 require 'thor'
 require 'json'
+require 'base64'
 
 MesaDirError = Class.new(StandardError)
 TestCaseDirError = Class.new(StandardError)
@@ -48,9 +49,14 @@ e-mail and password will be stored in plain text.'
         "#{s.email} (required)? (#{s.password})", :blue
       s.password = response unless response.empty?
 
+      # Get API key for submitting failure logs
+      response = shell.ask 'What is the logs submission API token associated '\
+        "with the email #{s.email} (required)? (#{s.logs_token})", :blue
+      s.logs_token = response unless response.empty?
+
       # Determine if we'll use ssh or https to access github
       response = shell.ask 'When accessing GitHub, which protocol do you '\
-        'want to use? ', :blue, limited_to: %w[ssh https]
+        'want to use?', :blue, limited_to: %w[ssh https]
       s.github_protocol = response.strip.downcase.to_sym
 
       # Get location of source MESA repo (the mirror)
@@ -118,7 +124,7 @@ e-mail and password will be stored in plain text.'
   def initialize(
       computer_name: nil, user_name: nil, email: nil, github_protocol: nil,
       mesa_mirror: nil, platform: nil, platform_version: nil, processor: nil,
-      config_file: nil, base_uri: nil, log_token: nil
+      config_file: nil, base_uri: nil, logs_token: nil
   )
     @computer_name = computer_name || Socket.gethostname.scan(/^[^\.]+\.?/)[0]
     @computer_name.chomp!('.') if @computer_name
@@ -146,7 +152,7 @@ e-mail and password will be stored in plain text.'
     @config_file = config_file || File.join(ENV['HOME'], '.mesa_test',
                                             'config.yml')
     @base_uri = base_uri
-    @logs_token = log_token || ENV['MESA_LOGS_TOKEN']
+    @logs_token = logs_token || ENV['MESA_LOGS_TOKEN']
 
     # set up thor-proof way to get responses from user. Thor hijacks the
     # gets command, so we have to use its built-in "ask" method, which is
@@ -167,6 +173,7 @@ e-mail and password will be stored in plain text.'
     puts "Computer Name           #{computer_name}"
     puts "User email              #{email}"
     puts 'Password                ***********'
+    puts "logs API token          #{logs_token}"
     puts "GitHub Protocol         #{github_protocol}"
     puts "MESA Mirror Location    #{mesa_mirror}"
     puts "MESA Work Location      #{mesa_work}"
@@ -189,6 +196,7 @@ e-mail and password will be stored in plain text.'
       'computer_name' => computer_name,
       'email' => email,
       'password' => password,
+      'logs_token' => logs_token,
       'github_protocol' => github_protocol,
       'mesa_mirror' => mesa_mirror,
       'mesa_work' => mesa_work,
@@ -207,6 +215,7 @@ e-mail and password will be stored in plain text.'
     @computer_name = data_hash['computer_name']
     @email = data_hash['email']
     @password = data_hash['password']
+    @logs_token = data_hash['logs_token']
     @github_protocol = data_hash['github_protocol'].to_sym
     @mesa_mirror = data_hash['mesa_mirror']
     @mesa_work = data_hash['mesa_work']
@@ -279,7 +288,7 @@ e-mail and password will be stored in plain text.'
     {
       'computer_name' => computer_name,
       'commit' => mesa.sha,
-      'build.log' => mesa.build_log_file_64
+      'build.log' => mesa.build_log_64
     }
   end
 
@@ -287,7 +296,7 @@ e-mail and password will be stored in plain text.'
   def test_log_params(test_case)
     res = {
       'computer_name' => computer_name,
-      'commit' => mesa.sha, 
+      'commit' => test_case.mesa.sha, 
       'test_case' => test_case.test_name     
     }
     res['mk.txt'] = test_case.mk_64 unless test_case.mk_64.empty?
@@ -342,7 +351,9 @@ e-mail and password will be stored in plain text.'
     # 
     # if we have an empty submission, then it is necessarily not entire.
     # Similarly, a non-empty submission is necessarily entire (otherwise one
-    # would use +submit_instance+)
+    # would use +submit_instance+). Also, make a "nonempty" submission be
+    # empty if there was an overall build error
+    empty ||= !mesa.installed?
     request_data = {submitter: submitter_params,
                     commit: commit_params(mesa, empty: empty, entire: !empty)}
     # don't need test instances if it's an empty submission or if compilation
@@ -362,6 +373,7 @@ e-mail and password will be stored in plain text.'
     else
       shell.say "\nSuccessfully submitted commit #{mesa.sha}.", :green
       # commit submitted to testhub, now submit build log if compilation failed
+      # and exit
       unless mesa.installed?
         return submit_build_log(mesa)
       end
@@ -373,7 +385,9 @@ e-mail and password will be stored in plain text.'
           test_case_hash.each do |tc_name, test_case|
             # get at each individual test case, see if it failed, and if it
             # did, submit its log files
-            res &&= submit_test_log(test_case) unless test_case.passed?
+            unless test_case.passed?
+              res &&= submit_test_log(test_case)
+            end
           end
         end
       end
@@ -445,8 +459,8 @@ e-mail and password will be stored in plain text.'
 
     # don't even try unless we have a logs token set
     unless logs_token
-      shell.say 'Cannot submit to logs server; need to set MESA_LOGS_TOKEN '\
-                'environment variable to valid API key.'
+      shell.say 'Cannot submit to logs server; need to set mesa_logs_token '\
+                'in the mesa_test config file.'
       return false
     end
 
@@ -454,7 +468,7 @@ e-mail and password will be stored in plain text.'
     res = submit_logs(build_log_params(mesa))
 
     # report out results
-    if !res.is_a? Net::HTTPCreated
+    if !res.is_a? Net::HTTPOK
       shell.say "\nFailed to submit build.log to the LOGS server for commit "\
                 "#{mesa.sha}.", :red
       false
@@ -468,12 +482,12 @@ e-mail and password will be stored in plain text.'
   # send build log to the logs server
   def submit_test_log(test_case)
     # skip submission if mesa was never installed or if the test passed
-    return true if !mesa.installed? || test_case.passed?
+    return true if !test_case.mesa.installed? || test_case.passed?
 
     # don't even try unless we have a logs token set
     unless logs_token
-      shell.say 'Cannot submit to logs server; need to set MESA_LOGS_TOKEN '\
-                'environment variable to valid API key.'
+      shell.say 'Cannot submit to logs server; need to set mesa_logs_token '\
+                'in the mesa_test config file..'
       return false
     end
   
@@ -481,13 +495,15 @@ e-mail and password will be stored in plain text.'
     res = submit_logs(test_log_params(test_case))
 
     # report out results
-    if !res.is_a? Net::HTTPCreated
-      shell.say "\nFailed to submit build.log to the LOGS server for commit "\
-                "#{mesa.sha}.", :red
+    if !res.is_a? Net::HTTPOK
+      shell.say "Failed to submit out.txt and mk.txt to the LOGS server for "\
+                "test case #{test_case.test_name} in commit "\
+                "#{test_case.mesa.sha}.", :red
       false
     else
-      shell.say "\nSuccessfully submitted build.log to the LOGS server for "\
-                "#{mesa.sha}.", :green
+      shell.say "Successfully submitted out.txt and mk.txt to the LOGS "\
+                "server for test case #{test_case.test_name} in commit "\
+                "#{test_case.mesa.sha}.", :green
       true
     end
   end
@@ -979,7 +995,7 @@ class MesaTestCase
   # whether or not a test case has passed; only has meaning
   # if we can load the results hash, though
   def passed?
-    results_hash[:passed]
+    results_hash['outcome'] == :pass
   end
 
   # Base-64 encoded contents of mk.txt file

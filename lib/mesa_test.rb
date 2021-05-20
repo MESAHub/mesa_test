@@ -497,14 +497,13 @@ e-mail and password will be stored in plain text.'
 
     # report out results
     if !res.is_a? Net::HTTPOK
-      shell.say "Failed to submit out.txt and mk.txt to the LOGS server for "\
-                "test case #{test_case.test_name} in commit "\
-                "#{test_case.mesa.sha}.", :red
+      shell.say "Failed to submit logs for test case #{test_case.test_name} "\
+                "in commit #{test_case.mesa.sha}.", :red
       false
     else
-      shell.say "Successfully submitted out.txt and mk.txt to the LOGS "\
-                "server for test case #{test_case.test_name} in commit "\
-                "#{test_case.mesa.sha}.", :green
+      shell.say "Successfully submitted logs for test case "\
+                "#{test_case.test_name} in commit #{test_case.mesa.sha}.",
+                :green
       true
     end
   end

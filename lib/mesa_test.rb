@@ -212,7 +212,7 @@ e-mail and password will be stored in plain text.'
   end
 
   def load_computer_data
-    data_hash = YAML.safe_load(File.read(config_file), [Symbol])
+    data_hash = YAML.load(File.read(config_file))
     @computer_name = data_hash['computer_name']
     @email = data_hash['email']
     @password = data_hash['password']
@@ -989,7 +989,7 @@ class MesaTestCase
       raise TestCaseDirError.new('No results found for test case '\
                                  "#{test_name}.")
     end
-    YAML.safe_load(File.read(testhub_file), [Symbol])
+    YAML.load(File.read(testhub_file))
   end
 
   # whether or not a test case has passed; only has meaning

@@ -138,7 +138,8 @@ class MesaTest < Thor
         m.check_installation
       rescue MesaDirError
         shell.say %q{This MESA installation doesn't seem to be compiled } \
-          'properly. Submitting a compilation failure to MESATestHub.', :red
+          'properly. Attempting to submit a compilation failure to '\
+          'MESATestHub.', :red
         empty = true
       ensure
         # submit all tests
@@ -209,8 +210,14 @@ class MesaTest < Thor
             github_protocol: s.github_protocol
           )
         end
-    m.clean
-    m.install
+    begin
+      m.clean
+      m.install
+    rescue MesaDirError
+      shell.say "\nFailed in compiling MESA.", :red
+    else
+      shell.say "\nSuccessfully compiled MESA commit #{m.sha}.", :green
+    end
   end
 
   desc 'install_and_test [SHA]', 'Install, test, and submit an entire commit.'

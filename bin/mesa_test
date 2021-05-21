@@ -4,7 +4,7 @@
 # rather than system version and run out of local lib, not installed
 # if :staging, submit to beta version and run out of local lib, not installed
 # anything else: trust rubygems to get lib and submit to real deal testhub
-MODE = :development
+MODE = :production
 
 case MODE
 when :staging, :development

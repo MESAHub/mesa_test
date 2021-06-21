@@ -622,7 +622,7 @@ class Mesa
 
   def update_mirror
     shell.say "\nFetching MESA history...", :blue
-    command = "git -C #{mirror_dir} fetch origin"
+    command = "git -C #{mirror_dir} fetch origin --prune"
     shell.say command
     # fail loudly
     return if bash_execute(command)

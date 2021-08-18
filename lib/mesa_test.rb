@@ -334,7 +334,7 @@ e-mail and password will be stored in plain text.'
 
   # submit entire commit's worth of test cases, OR submit compilation status
   # and NO test cases
-  def submit_commit(mesa, empty: false)
+  def submit_commit(mesa, empty: false, force_logs: false)
     unless mesa.install_attempted?
       raise MesaDirError, 'No testhub.yml file found in installation; '\
                           'must attempt to install before subitting.'
@@ -386,8 +386,8 @@ e-mail and password will be stored in plain text.'
           test_case_hash.each do |tc_name, test_case|
             # get at each individual test case, see if it failed, and if it
             # did, submit its log files
-            unless test_case.passed?
-              res &&= submit_test_log(test_case)
+            if !test_case.passed? || force_logs
+              res &&= submit_test_log(test_case, skip_passing: !force_logs)
             end
           end
         end
@@ -401,7 +401,7 @@ e-mail and password will be stored in plain text.'
 
   # submit results for a single test case instance. Does *not* report overall
   # compilation status to testhub. Use an empty commit submission for that
-  def submit_instance(mesa, test_case)
+  def submit_instance(mesa, test_case, force_logs: false)
     unless mesa.install_attempted?
       raise MesaDirError, 'No testhub.yml file found in installation; '\
                           'must attempt to install before subitting.'
@@ -436,7 +436,9 @@ e-mail and password will be stored in plain text.'
       shell.say "\nSuccessfully submitted instance of #{test_case.test_name} "\
                 "for commit #{mesa.sha}.", :green
       # submit logs if test failed
-      return submit_test_log(test_case) unless test_case.passed?
+      if !test_case.passed? || force_logs
+        return submit_test_log(test_case, skip_passing: !force_logs)
+      end
       true
     end
   end
@@ -481,9 +483,11 @@ e-mail and password will be stored in plain text.'
   end
 
   # send build log to the logs server
-  def submit_test_log(test_case)
+  def submit_test_log(test_case, skip_passing: true)
     # skip submission if mesa was never installed or if the test passed
-    return true if !test_case.mesa.installed? || test_case.passed?
+    if !test_case.mesa.installed? || (test_case.passed? && skip_passing)
+      return true
+    end
 
     # don't even try unless we have a logs token set
     unless logs_token

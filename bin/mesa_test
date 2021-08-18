@@ -36,6 +36,8 @@ class MesaTest < Thor
                        '~/.mesa_test.yml are correct rather than checking ' \
                        'with user.',
                  type: :boolean, default: true, aliases: '-f'
+  option 'force-logs', desc: 'Submit logs for test case(s), even if they pass',
+                       type: :boolean, default: false
   option :submit, desc: 'Submit results (if any) to MesaTestHub.',
                   type: :boolean, default: true
   option :module, desc: 'Which module to test and/or submit, if applicable.',
@@ -68,7 +70,7 @@ class MesaTest < Thor
 
       # submit results
       shell.say 'Submitting results to ' + s.base_uri + '... ', :blue
-      s.submit_instance(m, t)
+      s.submit_instance(m, t, force_logs: options['force-logs'])
     else
       # run all tests
       m.each_test_run(mod: options[:module].downcase.to_sym)
@@ -77,7 +79,7 @@ class MesaTest < Thor
       return unless options[:submit]
 
       shell.say 'Submitting results to ' + s.base_uri + '... ', :blue
-      s.submit_commit(m)
+      s.submit_commit(m, force_logs: options['force-logs'])
     end
     shell.say "Done.\n", :green
   end
@@ -98,6 +100,8 @@ class MesaTest < Thor
                        '~/.mesa_test.yml are correct rather than checking ' \
                        'with user.',
                  type: :boolean, default: true, aliases: '-f'
+  option 'force-logs', desc: 'Submit logs for test case(s), even if they pass',
+                       type: :boolean, default: false
   option :module, desc: 'Which module to test and/or submit, if applicable.',
                   type: :string, default: 'all', aliases: '-m'
   option :empty, desc: 'Whether any test cases will be submitted. Useful for '\
@@ -129,7 +133,7 @@ class MesaTest < Thor
                                      mod: options[:module].downcase.to_sym)
       # submit results
       shell.say 'Submitting results to ' + s.base_uri + '... ', :blue
-      s.submit_instance(m, t)
+      s.submit_instance(m, t, force_logs: options['force-logs'])
       shell.say "Done.\n", :green
     else
       # submitting compilation information and either all tests (entire) or
@@ -143,7 +147,7 @@ class MesaTest < Thor
         empty = true
       ensure
         # submit all tests
-        s.submit_commit(m, empty: empty)
+        s.submit_commit(m, empty: empty, force_logs: options['force-logs'])
       end
     end
   end
@@ -298,7 +302,10 @@ class MesaTest < Thor
     ensure
       # submit all commit and test data
       successfully_submitted = false
-      successfully_submitted = s.submit_commit(m) if options[:submit]
+      if options[:submit]
+        successfully_submitted = s.submit_commit(
+          m, force_logs: options['force-logs'])
+      end
 
       # if requested, installation and submission are successful, destroy the
       # directory

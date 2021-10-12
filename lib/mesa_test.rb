@@ -484,8 +484,9 @@ e-mail and password will be stored in plain text.'
 
   # send build log to the logs server
   def submit_test_log(test_case, skip_passing: true)
-    # skip submission if mesa was never installed or if the test passed
-    if !test_case.mesa.installed? || (test_case.passed? && skip_passing)
+    # skip submission if mesa was never installed, test was never run, or if
+    # the test passed
+    if !test_case.mesa.installed? || !test_case.ran? || (test_case.passed? && skip_passing)
       return true
     end
 
@@ -989,11 +990,16 @@ class MesaTestCase
 
   def results_hash
     testhub_file = File.join(test_case_dir, 'testhub.yml')
-    unless File.exist?(testhub_file)
+    unless ran?
       raise TestCaseDirError.new('No results found for test case '\
                                  "#{test_name}.")
     end
     YAML.load(File.read(testhub_file))
+  end
+
+  # rough proxy for whether or not the test has even been run
+  def ran?
+    File.exist?(testhub_file)
   end
 
   # whether or not a test case has passed; only has meaning

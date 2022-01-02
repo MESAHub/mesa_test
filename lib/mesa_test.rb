@@ -979,6 +979,10 @@ class MesaTestCase
     File.join(test_suite_dir, test_name)
   end
 
+  def testhub_file
+    File.join(test_case_dir, 'testhub.yml')
+  end
+
   # just punt to +each_test_run+ in the test_suite directory. It's your problem
   # now, sucker!
   def do_one
@@ -989,7 +993,6 @@ class MesaTestCase
   end
 
   def results_hash
-    testhub_file = File.join(test_case_dir, 'testhub.yml')
     unless ran?
       raise TestCaseDirError.new('No results found for test case '\
                                  "#{test_name}.")

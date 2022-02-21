@@ -4,7 +4,7 @@
 # rather than system version and run out of local lib, not installed
 # if :staging, submit to beta version and run out of local lib, not installed
 # anything else: trust rubygems to get lib and submit to real deal testhub
-MODE = :production
+MODE = :development
 
 case MODE
 when :staging, :development
@@ -312,6 +312,40 @@ class MesaTest < Thor
       m.remove if successfully_submitted && options[:destroy] && m.installed?
     end
   end
+
+  desc 'request_commit [BRANCH] [MAX AGE]', 'Ask testhub for optimal commit to test.'
+  long_desc <<-LONGDESC
+    Asks testhub for a recently-pushed commit that has not already been tested
+    by this computer. Can customize what "recent" means, as well as restrict
+    the search to particular branches, and allow/disallow types of continuous
+    integration flags.
+  LONGDESC
+  option 'allow-optional', desc: 'Whether to allow commits with [ci optional]',
+                           type: :boolean, default: true, aliases: '-o'
+  option 'allow-fpe', desc: 'Whether to allow commits with [ci fpe]',
+                      type: :boolean, default: true
+  option 'allow-converge', desc: 'Whether to allow commits with [ci converge]',
+                           type: :boolean, default: true, aliases: '-c'
+  option 'allow-skip', desc: 'Whether to allow commits with [ci skip]',
+                       type: :boolean, default: false, aliases: '-s'
+  option :force, desc: 'When requesting, assume submission data in ' \
+                       '~/.mesa_test.yml are correct rather than checking ' \
+                       'with user.',
+                 type: :boolean, default: true, aliases: '-f'
+
+  def request_commit(branch=nil, max_age=10)
+    s = create_and_check_submitter(force: options[:force])
+    commit = s.request_commit(
+      allow_optional: options['allow-optional'],
+      allow_fpe: options['allow-fpe'],
+      allow_converge: options['allow-converge'],
+      allow_skip: options['allow-skip'],
+      max_age: max_age,
+      branch: branch
+    )
+    puts commit
+  end
+
 
   desc 'setup [CONFIG_FILE]', 'Setup MesaTestHub config file.'
   long_desc <<-LONGDESC

@@ -332,6 +332,32 @@ e-mail and password will be stored in plain text.'
     JSON.parse(https.request(request).body).to_hash
   end
 
+  # ask testhub for a good candidate commit for testing
+  def request_commit(allow_optional: true, allow_fpe: true,
+                     allow_converge: true, allow_skip: true, max_age: 10,
+                     branch: nil)
+    uri = URI.parse(base_uri + '/submissions/request_commit.json')
+    https = Net::HTTP.new(uri.hostname, uri.port)
+    https.use_ssl = base_uri.include? 'https'
+
+    request = Net::HTTP::Get.new(
+      uri, initheader = { 'Accept' => 'application/json', 'Content-Type' => 'application/json' }
+    )
+    request_data = {
+      submitter: submitter_params,
+      allow_optional: allow_optional,
+      allow_fpe: allow_fpe,
+      allow_converge: allow_converge,
+      allow_skip: allow_skip,
+      max_age: max_age,
+      branch: branch
+    }
+    request.body = request_data.to_json
+
+    response = https.request request
+    puts data = JSON.parse(response.body).to_hash
+  end
+
   # submit entire commit's worth of test cases, OR submit compilation status
   # and NO test cases
   def submit_commit(mesa, empty: false, force_logs: false)
@@ -514,6 +540,17 @@ e-mail and password will be stored in plain text.'
   end
 
 end
+
+# TODO: Make a Commit class to catch commits provided by Testhub API?
+# This would hold on to SHA as well as CI information like whether it shoudl be
+# "skipped", whether it should run optional inlists, run at higher convergence,
+# etc. Then we might refactor some of the class methods in `Mesa` to checkout
+# or install commits instead of shas. It could then optionally handle some of
+# the necessary environment variables automatically.
+# 
+# Then again, these conventions could change, and then we could have "bad"
+# versions of `mesa_test`. Perhaps its best we provide ways to get these values
+# programatically, and then a user can interpret them however they wish.
 
 class Mesa
   attr_reader :mesa_dir, :mirror_dir, :names_to_numbers, :shell,

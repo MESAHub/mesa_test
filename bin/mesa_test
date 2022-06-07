@@ -57,29 +57,31 @@ class MesaTest < Thor
       mod: options[:module].downcase.to_sym,
       github_protocol: s.github_protocol
     )
-    if test_case_name
-      # only testing one test case
-      t = create_and_check_test_case(mesa: m, test_case_name: test_case_name,
-                                     mod: options[:module].downcase.to_sym)
-
-      # run test
-      t.do_one
-
-      # bail out if not submitting
-      return unless options[:submit]
-
-      # submit results
-      shell.say 'Submitting results to ' + s.base_uri + '... ', :blue
-      s.submit_instance(m, t, force_logs: options['force-logs'])
-    else
-      # run all tests
-      m.each_test_run(mod: options[:module].downcase.to_sym)
-
-      # bail out if not submitting
-      return unless options[:submit]
-
-      shell.say 'Submitting results to ' + s.base_uri + '... ', :blue
-      s.submit_commit(m, force_logs: options['force-logs'])
+    m.with_mesa_dir do
+      if test_case_name
+        # only testing one test case
+        t = create_and_check_test_case(mesa: m, test_case_name: test_case_name,
+                                       mod: options[:module].downcase.to_sym)
+  
+        # run test
+        t.do_one
+  
+        # bail out if not submitting
+        return unless options[:submit]
+  
+        # submit results
+        shell.say 'Submitting results to ' + s.base_uri + '... ', :blue
+        s.submit_instance(m, t, force_logs: options['force-logs'])
+      else
+        # run all tests
+        m.each_test_run(mod: options[:module].downcase.to_sym)
+  
+        # bail out if not submitting
+        return unless options[:submit]
+  
+        shell.say 'Submitting results to ' + s.base_uri + '... ', :blue
+        s.submit_commit(m, force_logs: options['force-logs'])
+      end
     end
     shell.say "Done.\n", :green
   end
@@ -123,31 +125,32 @@ class MesaTest < Thor
 
     # default value for now; might change to false if we have a bad
     # installation or if a test case is specified
-
-    if test_case_name
-      # just submitting one test case.
-      # this is not an empty submission since there is one test case (the
-      # +empty+ option is ignored in this case)
-
-      t = create_and_check_test_case(mesa: m, test_case_name: test_case_name,
-                                     mod: options[:module].downcase.to_sym)
-      # submit results
-      shell.say 'Submitting results to ' + s.base_uri + '... ', :blue
-      s.submit_instance(m, t, force_logs: options['force-logs'])
-      shell.say "Done.\n", :green
-    else
-      # submitting compilation information and either all tests (entire) or
-      # no tests (empty)
-      begin
-        m.check_installation
-      rescue MesaDirError
-        shell.say %q{This MESA installation doesn't seem to be compiled } \
-          'properly. Attempting to submit a compilation failure to '\
-          'MESATestHub.', :red
-        empty = true
-      ensure
-        # submit all tests
-        s.submit_commit(m, empty: empty, force_logs: options['force-logs'])
+    m.with_mesa_dir do
+      if test_case_name
+        # just submitting one test case.
+        # this is not an empty submission since there is one test case (the
+        # +empty+ option is ignored in this case)
+  
+        t = create_and_check_test_case(mesa: m, test_case_name: test_case_name,
+                                       mod: options[:module].downcase.to_sym)
+        # submit results
+        shell.say 'Submitting results to ' + s.base_uri + '... ', :blue
+        s.submit_instance(m, t, force_logs: options['force-logs'])
+        shell.say "Done.\n", :green
+      else
+        # submitting compilation information and either all tests (entire) or
+        # no tests (empty)
+        begin
+          m.check_installation
+        rescue MesaDirError
+          shell.say %q{This MESA installation doesn't seem to be compiled } \
+            'properly. Attempting to submit a compilation failure to '\
+            'MESATestHub.', :red
+          empty = true
+        ensure
+          # submit all tests
+          s.submit_commit(m, empty: empty, force_logs: options['force-logs'])
+        end
       end
     end
   end
@@ -298,7 +301,7 @@ class MesaTest < Thor
 
       # run all tests. Don't be fooled, whether or not a diff happens is set
       # by the diff attribute of the mesa object, set above.
-      m.each_test_run(mod: options[:module].downcase.to_sym)
+      m.with_mesa_dir { m.each_test_run(mod: options[:module].downcase.to_sym) }
     ensure
       # submit all commit and test data
       successfully_submitted = false

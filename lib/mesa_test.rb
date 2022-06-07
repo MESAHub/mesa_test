@@ -609,10 +609,10 @@ class Mesa
       end
     end
 
-    update_mirror
-
     # ensure "work" directory is removed from worktree
     remove
+
+    update_mirror
 
     # create "work" directory with proper commit
     shell.say "\nSetting up worktree repo...", :blue
@@ -813,16 +813,6 @@ class Mesa
     File.exist? File.join(mesa_dir, 'testhub.yml')
   end
 
-  private
-
-  # verify that mesa_dir is valid by checking for existence of test_suite
-  # directory for each module (somewhat arbitrary)
-  def check_mesa_dir
-    MesaTestCase.modules.inject(true) do |res, mod|
-      res && dir_or_symlink_exists?(test_suite_dir(mod: mod))
-    end
-  end
-
   # change MESA_DIR for the execution of the block and then revert to the
   # original value
   def with_mesa_dir
@@ -830,7 +820,7 @@ class Mesa
     orig_mesa_dir = ENV['MESA_DIR']
     ENV['MESA_DIR'] = mesa_dir
     shell.say "Temporarily changed MESA_DIR to #{ENV['MESA_DIR']}.", :blue
-
+  
     # do the stuff
     begin
       yield
@@ -838,6 +828,16 @@ class Mesa
     ensure
       ENV['MESA_DIR'] = orig_mesa_dir
       shell.say "Changed MESA_DIR back to #{ENV['MESA_DIR']}.", :blue
+    end
+  end
+
+  private
+
+  # verify that mesa_dir is valid by checking for existence of test_suite
+  # directory for each module (somewhat arbitrary)
+  def check_mesa_dir
+    MesaTestCase.modules.inject(true) do |res, mod|
+      res && dir_or_symlink_exists?(test_suite_dir(mod: mod))
     end
   end
 

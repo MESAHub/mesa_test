@@ -446,7 +446,8 @@ e-mail and password will be stored in plain text.'
   # make generic request to LOGS server
   # +params+ is a hash of data to be encoded as JSON and sent off
   def submit_logs(params)
-    uri = URI('https://logs.mesastar.org/uploads')
+    #uri = URI('https://logs.mesastar.org/uploads')
+    uri = URI('https://mesa-logs.flatironinstitute.org/uploads')
     https = Net::HTTP.new(uri.host, uri.port)
     https.use_ssl = true
     req = Net::HTTP::Post.new(uri.path, 'Content-Type' => 'application/json',

@@ -1,8 +1,8 @@
 Gem::Specification.new do |s|
   s.name = 'mesa_test'
-  s.version = '1.1.9'
+  s.version = '1.1.10'
   s.author = 'William Wolf'
-  s.date = '2022-06-07'
+  s.date = '2024-11-14'
   s.description = 'mesa_test is a command-line interface for running the ' \
     'test suites in MESA and submitting them to the companion website ' \
     'MESATestHub.'
@@ -13,7 +13,7 @@ Gem::Specification.new do |s|
   s.homepage = 'https://github.com/MESAHub/mesa_test'
   s.add_dependency('json', '~> 2.0')
   s.add_dependency('os', '~> 1.0')
-  s.add_dependency('thor', '~> 0.19')
+  s.add_dependency('thor', '~> 1.3.0')
   s.bindir = 'bin'
   s.executables = ['mesa_test']
   s.license = 'MIT'

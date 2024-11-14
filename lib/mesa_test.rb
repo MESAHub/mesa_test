@@ -51,7 +51,7 @@ e-mail and password will be stored in plain text.'
 
       # Get API key for submitting failure logs
       response = shell.ask 'What is the logs submission API token associated '\
-        "with the email #{s.email} (required; contact Josiah Schwab if you "\
+        "with the email #{s.email} (required; contact Philip Mocz if you "\
         "need a key)? (#{s.logs_token})", :blue
       s.logs_token = response unless response.empty?
 

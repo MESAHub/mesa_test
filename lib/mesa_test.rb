@@ -18,7 +18,7 @@ GITHUB_HTTPS = 'https://github.com/MESAHub/mesa.git'.freeze
 GITHUB_SSH = 'git@github.com:MESAHub/mesa.git'.freeze
 
 class MesaTestSubmitter
-  DEFAULT_URI = 'https://mesa-test-hub.herokuapp.com'.freeze
+  DEFAULT_URI = 'https://testhub.mesastar.org'.freeze
 
   # set up config file for computer
   def setup

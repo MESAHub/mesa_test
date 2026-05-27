@@ -328,7 +328,67 @@ class MesaTest < Thor
                                       force_setup: true)
   end
 
+  desc 'search "QUERY"', 'retrieve JSON test instances matching QUERY'
+  long_desc <<-LONGDESC
+  Sends a GET request to the MesaTestHub search API. QUERY should be
+  quoted. Credentials are read from your mesa_test config file and sent as
+  URL query parameters (HTTPS is mandatory).
+
+  Query syntax is the same key-value form used by the in-browser search box
+  at testhub.mesastar.org/test_instances/search (see the "Query syntax"
+  panel on that page). Example:
+
+    mesa_test search "computer: Hercules; passed: false"
+
+  The raw JSON response body is written to STDOUT, suitable for piping to
+  jq or redirecting to a file. If the server reports any rejected query
+  clauses in a `failures` array, those are also echoed to STDERR so they
+  aren't silently dropped from downstream pipelines. On a non-success HTTP
+  status, an error is written to STDERR and the command exits non-zero.
+  LONGDESC
+
+  def search(query)
+    s = create_submitter(force: true)
+    emit_search_response(s.search(query))
+  end
+
+  desc 'count "QUERY"', 'count test instances matching QUERY'
+  long_desc <<-LONGDESC
+  Like `search`, but hits the count endpoint. The response is a small JSON
+  object containing the result-set size (and any `failures`). Use this
+  before `search` when you don't know how large a result set will be.
+  LONGDESC
+
+  def count(query)
+    s = create_submitter(force: true)
+    emit_search_response(s.search_count(query))
+  end
+
   private
+
+  def emit_search_response(response)
+    if response.is_a?(Net::HTTPSuccess)
+      puts response.body
+      warn_search_failures(response.body)
+    else
+      $stderr.puts "Search request failed: HTTP #{response.code} "\
+                   "#{response.message}"
+      $stderr.puts response.body unless response.body.nil? || response.body.empty?
+      exit 1
+    end
+  end
+
+  def warn_search_failures(body)
+    parsed = JSON.parse(body)
+    failures = parsed['failures']
+    return unless failures.is_a?(Array) && !failures.empty?
+
+    $stderr.puts 'Warning: the following query clauses were rejected by '\
+                 'the server and ignored:'
+    failures.each { |f| $stderr.puts "  - #{f}" }
+  rescue JSON::ParserError
+    # Body wasn't JSON; nothing to surface.
+  end
 
   def work_dir(given, default)
     if given

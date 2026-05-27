@@ -51,8 +51,9 @@ e-mail and password will be stored in plain text.'
 
       # Get API key for submitting failure logs
       response = shell.ask 'What is the logs submission API token associated '\
-        "with the email #{s.email} (required; contact Philip Mocz if you "\
-        "need a key)? (#{s.logs_token})", :blue
+        "with the email #{s.email} (required; if you don't have one, ask a "\
+        "MESA testing maintainer or a representative from Flatiron for a "\
+        "key)? (#{s.logs_token})", :blue
       s.logs_token = response unless response.empty?
 
       # Determine if we'll use ssh or https to access github
@@ -514,6 +515,40 @@ e-mail and password will be stored in plain text.'
     end
   end
 
+  # GET a search query from the testhub. Credentials and the query string
+  # ride in the URL's query parameters (per the testhub search API contract;
+  # the controller also accepts session auth, but a CLI sends them in-band).
+  # Returns the raw Net::HTTP response.
+  def search(query_text)
+    get_search('/test_instances/search.json', query_text)
+  end
+
+  # Like #search, but hits the count endpoint. Useful for sizing a result set
+  # before pulling the full payload.
+  def search_count(query_text)
+    get_search('/test_instances/search_count.json', query_text)
+  end
+
+  private
+
+  def get_search(path, query_text)
+    uri = URI.parse(base_uri + path)
+    uri.query = URI.encode_www_form(
+      email: email,
+      password: password,
+      query_text: query_text
+    )
+
+    https = Net::HTTP.new(uri.hostname, uri.port)
+    https.use_ssl = base_uri.include? 'https'
+
+    request = Net::HTTP::Get.new(
+      uri,
+      initheader = { 'Accept' => 'application/json' }
+    )
+
+    https.request(request)
+  end
 end
 
 class Mesa

@@ -330,7 +330,12 @@ e-mail and password will be stored in plain text.'
       password: password,
       computer_name: computer_name
     }.to_json
-    JSON.parse(https.request(request).body).to_hash
+    response = testhub_request(https, request)
+    # if the hub was unreachable, behave as an unverified computer; the
+    # network error has already been reported by testhub_request
+    return {} if response.nil?
+
+    JSON.parse(response.body).to_hash
   end
 
   # submit entire commit's worth of test cases, OR submit compilation status
@@ -366,11 +371,15 @@ e-mail and password will be stored in plain text.'
     request.body = request_data.to_json
 
     # actually do the submission
-    response = https.request request
+    response = testhub_request(https, request)
 
-    if !response.is_a? Net::HTTPCreated
+    if response.nil?
+      # network failure; testhub_request already explained why
+      false
+    elsif !response.is_a? Net::HTTPCreated
       shell.say "\nFailed to submit some or all test case instances and/or "\
-                'commit data.', :red
+                "commit data (server responded #{response.code} "\
+                "#{response.message}).", :red
       false
     else
       shell.say "\nSuccessfully submitted commit #{mesa.sha}.", :green
@@ -427,12 +436,16 @@ e-mail and password will be stored in plain text.'
     request.body = request_data.to_json
 
     # actually do the submission
-    response = https.request request
+    response = testhub_request(https, request)
 
-    if !response.is_a? Net::HTTPCreated
+    if response.nil?
+      # network failure; testhub_request already explained why
+      return false
+    elsif !response.is_a? Net::HTTPCreated
       shell.say "\nFailed to submit #{test_case.test_name} for commit "\
-                "#{mesa.sha}", :red
-      false
+                "#{mesa.sha} (server responded #{response.code} "\
+                "#{response.message}).", :red
+      return false
     else
       shell.say "\nSuccessfully submitted instance of #{test_case.test_name} "\
                 "for commit #{mesa.sha}.", :green
@@ -444,17 +457,50 @@ e-mail and password will be stored in plain text.'
     end
   end
 
+  # Perform an HTTP request against the test hub with bounded connect/read
+  # timeouts, so a slow or unreachable server (e.g. while it is under heavy
+  # load) fails fast with a clear message instead of hanging on the default
+  # 60-second connect timeout and then dumping a raw Ruby backtrace. Returns
+  # the Net::HTTPResponse, or +nil+ if the request could not be completed
+  # because of a network problem.
+  def testhub_request(https, request)
+    https.open_timeout = 10
+    https.read_timeout = 60
+    https.request(request)
+  rescue StandardError => e
+    shell.say "\nCould not reach the test hub at #{https.address} "\
+              "(#{e.class}: #{e.message}).", :red
+    nil
+  end
+
   # make generic request to LOGS server
   # +params+ is a hash of data to be encoded as JSON and sent off
+  #
+  # Returns the Net::HTTPResponse on success, or +nil+ if the request could
+  # not be completed because of a network problem (the LOGS server being
+  # unreachable, slow, or refusing connections). The LOGS server only receives
+  # diagnostic build/test output, so a failure here must never crash the run or
+  # fail a CI build whose actual test results already reached the test hub. We
+  # cap the connect/read time so we fail fast instead of hanging on the default
+  # 60-second open timeout for every test case.
   def submit_logs(params)
     #uri = URI('https://logs.mesastar.org/uploads')
     uri = URI('https://mesa-logs.flatironinstitute.org/uploads')
     https = Net::HTTP.new(uri.host, uri.port)
     https.use_ssl = true
+    https.open_timeout = 10
+    https.read_timeout = 30
     req = Net::HTTP::Post.new(uri.path, 'Content-Type' => 'application/json',
                               'X-Api-Key' => logs_token)
     req.body = params.to_json
-    https.request(req)
+    begin
+      https.request(req)
+    rescue StandardError => e
+      shell.say "\nCould not reach the LOGS server at #{uri.host} "\
+                "(#{e.class}: #{e.message}). Skipping log upload; this does "\
+                'not affect test results already sent to the test hub.', :yellow
+      nil
+    end
   end
 
   # send build log to the logs server
@@ -473,9 +519,13 @@ e-mail and password will be stored in plain text.'
     res = submit_logs(build_log_params(mesa))
 
     # report out results
-    if !res.is_a? Net::HTTPOK
+    if res.nil?
+      # network failure; submit_logs already explained why. Don't fail the run.
+      false
+    elsif !res.is_a? Net::HTTPOK
       shell.say "\nFailed to submit build.log to the LOGS server for commit "\
-                "#{mesa.sha}.", :red
+                "#{mesa.sha} (server responded #{res.code} #{res.message}).",
+                :red
       false
     else
       shell.say "\nSuccessfully submitted build.log to the LOGS server for "\
@@ -503,9 +553,13 @@ e-mail and password will be stored in plain text.'
     res = submit_logs(test_log_params(test_case))
 
     # report out results
-    if !res.is_a? Net::HTTPOK
+    if res.nil?
+      # network failure; submit_logs already explained why. Don't fail the run.
+      false
+    elsif !res.is_a? Net::HTTPOK
       shell.say "Failed to submit logs for test case #{test_case.test_name} "\
-                "in commit #{test_case.mesa.sha}.", :red
+                "in commit #{test_case.mesa.sha} (server responded "\
+                "#{res.code} #{res.message}).", :red
       false
     else
       shell.say "Successfully submitted logs for test case "\

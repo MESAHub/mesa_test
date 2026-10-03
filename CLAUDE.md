@@ -20,15 +20,42 @@ Runtime dependencies (from gemspec): `thor ~> 1.3.0`, `json ~> 2.0`, `os ~> 1.0`
 - `Mesa` — Wraps a MESA checkout. Knows how to `checkout`, `clean`, `install`, and iterate test cases. Uses a **mirror + worktree** pattern: a bare-ish mirror clone lives at `mesa_mirror`, and `git worktree add` materializes a `mesa_work` directory at a given SHA so repeated checkouts don't re-download history. Requires `git-lfs`.
 - `MesaTestCase` — A single test case inside one of the three modules: `:star`, `:binary`, `:astero` (see [`MesaTestCase.modules`](lib/mesa_test.rb:952)). Test results are read from a `testhub.yml` file MESA writes into the test-case directory after a run.
 
-CLI commands (all defined in [bin/mesa_test](bin/mesa_test)): `test`, `submit`, `checkout`, `install`, `install_and_test`, `setup`, `search`, `count`. Run `mesa_test help <cmd>` for details. `search` and `count` are read-only query commands that hit the testhub's search API and emit raw JSON to stdout (suitable for `jq` pipelines).
+CLI commands (all defined in [bin/mesa_test](bin/mesa_test)): `test`, `submit`, `checkout`, `install`, `install_and_test`, `request_work`, `setup`, `search`, `count`. Run `mesa_test help <cmd>` for details. `search` and `count` are read-only query commands that hit the testhub's search API and emit raw JSON to stdout (suitable for `jq` pipelines).
+
+## Claims and dispatch (MESATestHub "Phase D")
+
+MESATestHub can tell a computer what to work on and track what is in flight. The server-side design lives in MESATestHub's `docs/dispatcher-and-claims.md`.
+
+- **Dispatch:** `MesaTestSubmitter#dispatch` → `POST /api/v1/dispatch`. It recommends a commit to build, or a test to run on a built SHA, plus the run modes to use. Returns nil on 204. `mesa_test request_work` prints the recommendation.
+- **Claims:** `MesaTestSubmitter#claim` → `POST /api/v1/claims`. It marks a build or test as pending rather than untested.
+  - Claims are advisory. Failures are warned about and swallowed, never fatal.
+  - The client never stores claim ids. The server fulfills claims by matching computer, commit, and test when the submission arrives.
+  - `install`, `test`, and `install_and_test` claim by default; turn it off with `--no-claim`.
+  - Whole-suite runs claim with `all_test_cases: true`, and only when `--module` is `all`.
+- **`install_and_test best` / `install best`:**
+  - The server picks the commit.
+  - `best` mode then submits the build on its own, and loops test-scope dispatch (pinned to the built SHA) → claim → run → `submit_instance` until it gets a 204.
+  - A repeated recommendation stops the loop, so it can't spin.
+  - An explicit SHA keeps the old whole-suite behavior.
+- **Run modes** (`run_flag_env` / `with_env` in lib):
+  - A dispatch flag only ever *adds* to the user's environment; a false flag leaves their setup alone.
+  - `full_inlists` unsets `MESA_SKIP_OPTIONAL`.
+  - `converge` sets `MESA_TEST_SUITE_RESOLUTION_FACTOR` (the user's value if set, else 0.8).
+  - `fpe` sets `MESA_FPE_CHECKS_ON=1`. It is **compile-time** (MESA's make reads it), so it is applied to the install and every test of that build. In test-scope dispatch, `can_fpe` means "this build has FPE checks".
+- **Capabilities:** the optional modes a computer can run live in config under `capabilities: [full_inlists, fpe, converge]`, set in the setup wizard. Override per run with `--modes`.
 
 ## Submission targets
 
 Two different servers are involved:
 
-1. **MESATestHub** — JSON API. URI selected by `MesaTestSubmitter::DEFAULT_URI` = `https://testhub.mesastar.org`. Two auth styles, both plaintext:
-   - **Submission flow** — `POST /check_computer.json`, `POST /submissions/create.json`. Auth via a `submitter` object (`email` + `password` + `computer` + `platform_version`) in the JSON request body, alongside commit/instance payload.
-   - **Search flow** — `GET /test_instances/search.json`, `GET /test_instances/search_count.json`. Auth via `email` and `password` *query parameters* (HTTPS-only); the search itself rides in `query_text`. Successful responses are `{"results": [...], "failures": [...]}` where `failures` lists query clauses the server's parser rejected. Always surface `failures` to the user — a typo in a key silently drops the clause, so the CLI echoes it to STDERR. Bad creds come back as HTTP 422 with `{"error":"Invalid e-mail or password."}`.
+1. **MESATestHub** — JSON API. URI selected by `MesaTestSubmitter::DEFAULT_URI` = `https://testhub.mesastar.org`.
+   - **Auth, preferred:** a per-computer **API key** (config `api_key`, or `MESATESTHUB_API_KEY` in the environment, which wins) sent as `Authorization: Bearer mth_…` on every request, via `MesaTestSubmitter#testhub_headers`.
+     - With a key, email and password are never sent. The `submitter` block carries just `computer` + `platform_version`.
+     - An unknown or revoked key gets 401 `{"error":"Invalid API key."}`. The server never falls back to the password.
+     - Keys are generated on the computer's page on MESATestHub.
+   - **Auth, legacy:** email + password, still fully supported and used whenever no key is configured.
+   - **Submission flow** — `POST /check_computer.json`, `POST /submissions/create.json`, `POST /api/v1/dispatch`, `POST /api/v1/claims`. With password auth, credentials go in a `submitter` object (`email` + `password` + `computer` + `platform_version`) in the JSON request body, alongside commit/instance payload.
+   - **Search flow** — `GET /test_instances/search.json`, `GET /test_instances/search_count.json`. With password auth, credentials are `email` and `password` *query parameters* (HTTPS-only); the search itself rides in `query_text`. Successful responses are `{"results": [...], "failures": [...]}` where `failures` lists query clauses the server's parser rejected. Always surface `failures` to the user — a typo in a key silently drops the clause, so the CLI echoes it to STDERR. Bad creds come back as HTTP 422 with `{"error":"Invalid e-mail or password."}`.
 2. **Logs server** — `https://mesa-logs.flatironinstitute.org/uploads`. Receives base64-encoded `build.log`, `mk.txt`, `out.txt`, `err.txt` from failing builds/tests. Auth via `X-Api-Key` header using `logs_token` from config (contact Philip Mocz for a key). URL is hardcoded in `MesaTestSubmitter#submit_logs`.
 
 ## The `MODE` switch — important before release
@@ -66,5 +93,6 @@ There is no automated test suite. Validation is manual: flip `MODE` to `:develop
 - The library uses bare `bash_execute` / `bashticks` helpers (bottom of [lib/mesa_test.rb](lib/mesa_test.rb)) to force commands through `bash -c`, because MESA's build scripts assume bash.
 - `Mesa#with_mesa_dir` temporarily mutates `ENV['MESA_DIR']` around a block and restores it — this is how the gem isolates MESA installs from the user's own `MESA_DIR`.
 - Config is YAML at `~/.mesa_test/config.yml` (note the directory, not a dotfile in `$HOME` directly). `MesaTestSubmitter::new_from_config` runs the setup wizard automatically if the file is missing.
-- Passwords and the logs API token are stored in plaintext in the config file. This is documented to the user in the setup wizard; don't try to "fix" it without a real plan for credential storage.
+- Passwords, API keys, and the logs API token are stored in plaintext in the config file. This is documented to the user in the setup wizard. The per-computer API key *is* the plan for credential storage: it can only submit for one computer, can't log into the website, and can be revoked on its own. Cluster jobs can use `MESATESTHUB_API_KEY` to keep it off disk entirely.
+- `Mesa#compiler_hash` symbolizes `testhub.yml`'s keys before merging over its symbol-keyed defaults. Without that, the commit payload carried duplicate `compiler`/`sdk_version`/... keys. json 2.x quietly serialized both (the server kept the last); json 3.x raises.
 - GitHub access protocol (`:ssh` vs `:https`) is per-user config and affects how the mirror is cloned.

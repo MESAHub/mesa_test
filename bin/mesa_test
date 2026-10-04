@@ -20,6 +20,39 @@ class MesaTest < Thor
   DEVELOPMENT_URI = 'http://localhost:3000'.freeze
   STAGING_URI = 'https://beta-testhub.herokuapp.com'.freeze
 
+  # Exit status when MesaTestHub has nothing for this computer to do, so a
+  # script can stop instead of re-testing whatever is already in the work
+  # directory:  mesa_test install best || exit
+  NOTHING_TO_DO_EXIT = 3
+
+  def self.exit_on_failure?
+    true
+  end
+
+  # --claim / --no-claim, shared by every command that starts work.
+  def self.claim_option
+    option :claim, desc: 'Tell MesaTestHub this computer is working on the ' \
+                         'commit (and its tests) so it shows as pending, not ' \
+                         'untested. Use --no-claim if something else already ' \
+                         'claimed it.',
+                   type: :boolean, default: true
+  end
+
+  # The run-mode switches. Each is three-way: --x, --no-x, or unset. What
+  # unset means depends on the command (see each command's help).
+  def self.run_mode_options
+    option :skip_optional, desc: 'Skip optional inlists (sets MESA_SKIP_OPTIONAL); ' \
+                                 '--no-skip-optional runs them all, as MESA does ' \
+                                 'by default.',
+                           type: :boolean
+    option :fpe, desc: 'Floating-point exception checks (MESA_FPE_CHECKS_ON=1). ' \
+                       'Compiled in, so it is chosen when MESA is installed.',
+                 type: :boolean
+    option :converge, desc: 'Convergence run (sets MESA_TEST_SUITE_RESOLUTION_FACTOR, ' \
+                            "keeping your value if set, else #{DEFAULT_CONVERGE_FACTOR}).",
+                      type: :boolean
+  end
+
   desc 'test [TEST CASE]', 'run and submit a test case or commit'
   long_desc <<-LONGDESC
     If you specify an optional test case, only that test case
@@ -30,6 +63,12 @@ class MesaTest < Thor
     this order:
 
     #{MesaTestCase.modules.map { |mod| '    ' + mod.to_s }.join(', ')}
+
+    Run modes (--skip-optional, --fpe, --converge): a flag given here wins;
+    otherwise the mode recorded when this build was installed (in
+    $MESA_DIR/testhub.yml) applies; otherwise your shell's environment
+    does. FPE checks are compiled in, so a build installed with or without
+    them keeps that setting whatever is passed here.
   LONGDESC
 
   option :force, desc: 'When submitting, assume submission data in ' \
@@ -44,6 +83,8 @@ class MesaTest < Thor
                   type: :string, default: 'all', aliases: '-m'
   option :mesadir, desc: 'Location of mesa dir, if not relying on config data',
                    type: :string
+  claim_option
+  run_mode_options
 
   def test(test_case_name = nil)
     s = if options[:submit]
@@ -57,30 +98,40 @@ class MesaTest < Thor
       mod: options[:module].downcase.to_sym,
       github_protocol: s.github_protocol
     )
-    m.with_mesa_dir do
-      if test_case_name
-        # only testing one test case
-        t = create_and_check_test_case(mesa: m, test_case_name: test_case_name,
-                                       mod: options[:module].downcase.to_sym)
+    modes = test_run_modes(m)
+    with_env(run_mode_env(modes)) do
+      m.with_mesa_dir do
+        if test_case_name
+          # only testing one test case
+          t = create_and_check_test_case(mesa: m, test_case_name: test_case_name,
+                                         mod: options[:module].downcase.to_sym)
+
+          if options[:submit] && options[:claim]
+            s.claim(sha: m.sha, scope: 'test', mod: t.mod, test_case: t.test_name,
+                    flags: claim_flags(modes))
+          end
+
+          # run test
+          t.do_one
   
-        # run test
-        t.do_one
+          # bail out if not submitting
+          return unless options[:submit]
   
-        # bail out if not submitting
-        return unless options[:submit]
+          # submit results
+          shell.say 'Submitting results to ' + s.base_uri + '... ', :blue
+          s.submit_instance(m, t, force_logs: options['force-logs'])
+        else
+          claim_all_tests(s, m, flags: claim_flags(modes)) if options[:submit] && options[:claim]
+
+          # run all tests
+          m.each_test_run(mod: options[:module].downcase.to_sym)
   
-        # submit results
-        shell.say 'Submitting results to ' + s.base_uri + '... ', :blue
-        s.submit_instance(m, t, force_logs: options['force-logs'])
-      else
-        # run all tests
-        m.each_test_run(mod: options[:module].downcase.to_sym)
+          # bail out if not submitting
+          return unless options[:submit]
   
-        # bail out if not submitting
-        return unless options[:submit]
-  
-        shell.say 'Submitting results to ' + s.base_uri + '... ', :blue
-        s.submit_commit(m, force_logs: options['force-logs'])
+          shell.say 'Submitting results to ' + s.base_uri + '... ', :blue
+          s.submit_commit(m, force_logs: options['force-logs'])
+        end
       end
     end
     shell.say "Done.\n", :green
@@ -190,6 +241,19 @@ class MesaTest < Thor
 
   If no sha is provided, defaults to main (if checkout is occuring). SHA is
   ignored if using option --no-checkout
+
+  Run modes given here (--skip-optional, --fpe, --converge) are used for
+  the build and recorded in $MESA_DIR/testhub.yml, so later `mesa_test test`
+  runs on this build (e.g. cluster array jobs) apply them automatically.
+
+  If SHA is `best`, MesaTestHub picks the commit this computer should build
+  next, and the run modes come from its request instead: the mode flags then
+  say what this computer is *willing* to do (overriding `capabilities` in the
+  config file). If nothing needs building, mesa_test exits with status
+  #{NOTHING_TO_DO_EXIT} without touching the work directory, so a script can
+  stop:
+
+      mesa_test install best || exit
   LONGDESC
 
   option :checkout, desc: 'Whether a checkout needs to happen. Use '\
@@ -197,12 +261,20 @@ class MesaTest < Thor
                     type: :boolean, default: true, aliases: '-c'
   option :mesadir, desc: 'Location of mesa dir, if not relying on config data',
                    type: :string
+  claim_option
+  run_mode_options
 
   def install(sha = 'main')
     # assuming config wizard has already been set (perhaps a little reckless)
     # so that we can get at the work directory and mirror directory
     s = create_submitter(force: true)
-    m = if options[:checkout]
+    rec = nil
+    if sha == 'best'
+      rec = dispatch_build_or_exit(s)
+      sha = rec['commit_sha']
+    end
+    modes = rec ? dispatch_run_modes(rec) : explicit_run_modes
+    m = if options[:checkout] || rec
           Mesa.checkout(
             sha: sha,
             work_dir: work_dir(options[:mesadir], s.mesa_work),
@@ -217,14 +289,11 @@ class MesaTest < Thor
             github_protocol: s.github_protocol
           )
         end
-    begin
-      m.clean
-      m.install
-    rescue MesaDirError
-      shell.say "\nFailed in compiling MESA.", :red
-    else
-      shell.say "\nSuccessfully compiled MESA commit #{m.sha}.", :green
+    if options[:claim]
+      s.claim(sha: m.sha, scope: 'build', flags: claim_flags(modes),
+              dispatched_at: rec && rec['dispatched_at'])
     end
+    build_with_modes(m, modes)
   end
 
   desc 'install_and_test [SHA]', 'Install, test, and submit an entire commit.'
@@ -247,6 +316,19 @@ class MesaTest < Thor
   If no sha is provided, defaults to main (if checkout is occuring). SHA is
   ignored if using option --no-checkout
 
+  Run modes (--skip-optional, --fpe, --converge) apply to the build and
+  every test; unset ones are left to your shell's environment.
+
+  If SHA is `best`, MesaTestHub drives the whole run instead:
+  it picks the commit to build (and whether to build it with FPE checks),
+  the build result is submitted on its own, and then tests run one at a
+  time in the order MesaTestHub asks for them, each submitted as it
+  finishes, until there is nothing left that this computer can usefully
+  run. The mode flags then say what this computer is willing to do
+  (overriding `capabilities` in the config file): commits asking for
+  [ci optional] or [ci converge] get those runs only if it's willing.
+  --module and --no-submit don't apply in this mode. If nothing needs
+  testing, mesa_test exits with status #{NOTHING_TO_DO_EXIT}.
   LONGDESC
 
   option :checkout, desc: 'Whether a checkout needs to happen. Use '\
@@ -264,8 +346,12 @@ class MesaTest < Thor
                   type: :string, default: 'all', aliases: '-m'
   option :destroy, type: :boolean, desc: 'Delete mesa installation upon ' \
                    'submission of complete results.', default: false
+  claim_option
+  run_mode_options
 
   def install_and_test(sha='main')
+    return install_and_test_best if sha == 'best'
+
     s = if options[:submit]
           create_and_check_submitter(force: options[:force])
         else
@@ -290,18 +376,24 @@ class MesaTest < Thor
           )
         end
 
+    modes = explicit_run_modes
+    claiming = options[:submit] && options[:claim]
+    s.claim(sha: m.sha, scope: 'build', flags: claim_flags(modes)) if claiming
+
     begin
-      m.clean
-      m.install
+      build_with_modes(m, modes, raise_on_failure: true)
     rescue MesaDirError
-      shell.say "\nFailed in compiling MESA.", :red
+      # already reported by build_with_modes
     else
       check_mesa(m)
       update_mesa(mesa: m, mod: options[:module].downcase.to_sym)
+      claim_all_tests(s, m, flags: claim_flags(modes)) if claiming
 
       # run all tests. Don't be fooled, whether or not a diff happens is set
       # by the diff attribute of the mesa object, set above.
-      m.with_mesa_dir { m.each_test_run(mod: options[:module].downcase.to_sym) }
+      with_env(run_mode_env(m.recorded_run_modes)) do
+        m.with_mesa_dir { m.each_test_run(mod: options[:module].downcase.to_sym) }
+      end
     ensure
       # submit all commit and test data
       successfully_submitted = false
@@ -314,6 +406,30 @@ class MesaTest < Thor
       # directory
       m.remove if successfully_submitted && options[:destroy] && m.installed?
     end
+  end
+
+  desc 'request_work', 'ask MesaTestHub what this computer should do next'
+  long_desc <<-LONGDESC
+  Asks MesaTestHub which commit this computer should build next (or, with
+  --scope=test --sha=SHA, which test to run next on a commit it built) and
+  prints the recommendation as JSON on STDOUT, including the run modes to
+  use and the reasons it was picked. The mode flags say what this computer
+  is willing to do (overriding `capabilities` in the config file). Prints
+  nothing and exits with status #{NOTHING_TO_DO_EXIT} when there is nothing
+  useful to do. Read-only: nothing is claimed.
+  LONGDESC
+
+  option :scope, desc: 'build or test', type: :string, default: 'build',
+                 enum: %w[build test]
+  option :sha, desc: 'For --scope=test: the commit you built', type: :string
+  run_mode_options
+
+  def request_work
+    s = create_submitter(force: true)
+    rec = dispatch_or_exit(s, scope: options[:scope], sha: options[:sha])
+    exit NOTHING_TO_DO_EXIT unless rec
+
+    puts JSON.pretty_generate(rec)
   end
 
   desc 'setup [CONFIG_FILE]', 'Setup MesaTestHub config file.'
@@ -365,6 +481,185 @@ class MesaTest < Thor
   end
 
   private
+
+  # `install_and_test best`: MesaTestHub picks the commit, then each test.
+  def install_and_test_best
+    unless options[:submit]
+      raise Thor::Error, '`install_and_test best` submits as it goes; ' \
+                         '--no-submit is not supported.'
+    end
+    s = create_and_check_submitter(force: options[:force])
+    rec = dispatch_build_or_exit(s)
+    modes = dispatch_run_modes(rec)
+    m = Mesa.checkout(sha: rec['commit_sha'],
+                      work_dir: work_dir(options[:mesadir], s.mesa_work),
+                      mirror_dir: s.mesa_mirror,
+                      github_protocol: s.github_protocol)
+    if options[:claim]
+      s.claim(sha: m.sha, scope: 'build', flags: claim_flags(modes),
+              dispatched_at: rec['dispatched_at'])
+    end
+
+    begin
+      build_with_modes(m, modes, raise_on_failure: true)
+    rescue MesaDirError
+      s.submit_commit(m, empty: true)
+      return
+    end
+    check_mesa(m)
+    update_mesa(mesa: m, mod: :all)
+
+    # Report the build on its own; this also fulfills the build claim.
+    s.submit_commit(m, empty: true)
+    # For test dispatch, can_fpe means "this build has FPE checks".
+    caps = capabilities_for(s).merge(fpe: m.recorded_run_modes[:fpe] == true)
+    all_submitted = run_dispatched_tests(s, m, caps)
+    m.remove if all_submitted && options[:destroy]
+  end
+
+  # Ask for, claim, run, and submit one test at a time on +m+'s commit
+  # until MesaTestHub has nothing more for this computer. Returns true if
+  # every submission went through.
+  def run_dispatched_tests(s, m, caps)
+    seen = {}
+    all_submitted = true
+    m.with_mesa_dir do
+      loop do
+        rec = dispatch_or_exit(s, scope: 'test', sha: m.sha, capabilities: caps)
+        break unless rec
+
+        label = "#{rec['test_case_module']}/#{rec['test_case_name']}"
+        key = [label, rec['flags']]
+        if seen[key]
+          # The last result evidently didn't register; don't spin.
+          shell.say "MesaTestHub asked for #{label} again; stopping.", :red
+          all_submitted = false
+          break
+        end
+        seen[key] = true
+
+        # FPE is the build's; the run-time modes are this dispatch's (at most
+        # one, so a run answers one request cleanly).
+        modes = m.recorded_run_modes.slice(:fpe).merge(dispatch_run_modes(rec).except(:fpe))
+        t = begin
+          m.find_test_case(test_case_name: rec['test_case_name'],
+                           mod: rec['test_case_module'].to_sym)
+        rescue TestCaseDirError => e
+          shell.say "#{e.message} Stopping.", :red
+          all_submitted = false
+          break
+        end
+        if options[:claim]
+          s.claim(sha: m.sha, scope: 'test', mod: t.mod, test_case: t.test_name,
+                  flags: claim_flags(modes), dispatched_at: rec['dispatched_at'])
+        end
+        with_env(run_mode_env(modes)) { t.do_one }
+        all_submitted &&= s.submit_instance(m, t, force_logs: options['force-logs'])
+      end
+    end
+    all_submitted
+  end
+
+  # Claim every test on +m+'s commit in one request — only for whole-suite
+  # runs, since claims for tests that never run would sit until they
+  # expire.
+  def claim_all_tests(s, m, flags: {})
+    return unless options[:module].to_s.downcase == 'all'
+
+    s.claim(sha: m.sha, scope: 'test', all_test_cases: true, flags: flags)
+  end
+
+  # clean + install +m+ with +modes+ in the environment, then record the
+  # modes in $MESA_DIR/testhub.yml for later `test`/`submit` runs.
+  def build_with_modes(m, modes, raise_on_failure: false)
+    with_env(run_mode_env(modes)) do
+      m.clean
+      m.install
+    end
+  rescue MesaDirError
+    shell.say "\nFailed in compiling MESA.", :red
+    raise if raise_on_failure
+  else
+    m.record_run_modes(modes)
+    shell.say "\nSuccessfully compiled MESA commit #{m.sha}.", :green
+    unless modes.empty?
+      shell.say "Recorded run modes for this build: #{describe_modes(modes)}.", :blue
+    end
+  end
+
+  # Run modes given explicitly on the command line (unset flags omitted).
+  def explicit_run_modes
+    modes = {}
+    modes[:skip_optional] = options[:skip_optional] unless options[:skip_optional].nil?
+    modes[:fpe] = options[:fpe] unless options[:fpe].nil?
+    modes[:resolution_factor] = (options[:converge] ? converge_factor : false) unless options[:converge].nil?
+    modes
+  end
+
+  # Modes for running tests on +m+'s build: what was recorded at install,
+  # overridden by flags given now — except FPE, which is compiled in.
+  def test_run_modes(m)
+    recorded = m.downloaded? ? m.recorded_run_modes : {}
+    explicit = explicit_run_modes
+    if recorded.key?(:fpe) && explicit.key?(:fpe) && explicit[:fpe] != recorded[:fpe]
+      shell.say "Ignoring --#{explicit[:fpe] ? '' : 'no-'}fpe: this build was compiled " \
+                "#{recorded[:fpe] ? 'with' : 'without'} FPE checks.", :yellow
+      explicit.delete(:fpe)
+    end
+    recorded.merge(explicit)
+  end
+
+  # What a claim says the work will run with (MESATestHub's use_* flags).
+  def claim_flags(modes)
+    {
+      fpe: modes[:fpe] == true,
+      full_inlists: modes[:skip_optional] == false,
+      converge: modes[:resolution_factor] ? true : false
+    }
+  end
+
+  def describe_modes(modes)
+    modes.map do |k, v|
+      case k
+      when :fpe then v ? 'FPE checks on' : 'FPE checks off'
+      when :skip_optional then v ? 'skip optional inlists' : 'run optional inlists'
+      when :resolution_factor then v ? "resolution factor #{v}" : 'default resolution'
+      end
+    end.join(', ')
+  end
+
+  # Optional modes this computer is willing to run for MesaTestHub: the
+  # config file's `capabilities`, overridden by any mode flag given.
+  def capabilities_for(s)
+    caps = s.capabilities.dup
+    caps[:fpe] = options[:fpe] unless options[:fpe].nil?
+    caps[:full_inlists] = !options[:skip_optional] unless options[:skip_optional].nil?
+    caps[:converge] = options[:converge] unless options[:converge].nil?
+    caps
+  end
+
+  # Ask for a commit to build, exiting with NOTHING_TO_DO_EXIT if there is
+  # none — before anything touches the work directory.
+  def dispatch_build_or_exit(s)
+    dispatch_or_exit(s, scope: 'build') || exit(NOTHING_TO_DO_EXIT)
+  end
+
+  # Dispatch, or print the server's complaint and exit 1. nil means there's
+  # nothing to do (said on STDERR so `request_work` STDOUT stays pure JSON).
+  def dispatch_or_exit(s, scope:, sha: nil, capabilities: capabilities_for(s))
+    rec = s.dispatch(scope: scope, sha: sha, capabilities: capabilities)
+    if rec.nil?
+      $stderr.puts 'MesaTestHub has nothing more for this computer to ' \
+                   "#{scope == 'build' ? 'build' : 'test on this commit'} right now."
+    elsif scope == 'build'
+      $stderr.puts "MesaTestHub suggests #{rec['short_sha']} on #{rec['branch']}: " \
+                   "#{Array(rec['reasons']).join('; ')}"
+    end
+    rec
+  rescue TestHubError => e
+    $stderr.puts e.message
+    exit 1
+  end
 
   def emit_search_response(response)
     if response.is_a?(Net::HTTPSuccess)

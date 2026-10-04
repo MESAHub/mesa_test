@@ -13,6 +13,7 @@ MesaDirError = Class.new(StandardError)
 TestCaseDirError = Class.new(StandardError)
 InvalidDataType = Class.new(StandardError)
 GitHubError = Class.new(StandardError)
+TestHubError = Class.new(StandardError)
 
 GITHUB_HTTPS = 'https://github.com/MESAHub/mesa.git'.freeze
 GITHUB_SSH = 'git@github.com:MESAHub/mesa.git'.freeze
@@ -29,25 +30,46 @@ will be able to confirm entries at the end. Default/current values are always
 shown in parentheses at the end of a prompt. Pressing enter will accept the
 default values.
 
-To submit to MESATestHub, a valid computer name, email address, and password
-are all required. To actually run a test, you need to specify a location for
-your base MESA git repository. All other data are useful, but optional. Any data
-transferred to MESATestHub will be encrypted via HTTPS, but be warned that your
-e-mail and password will be stored in plain text.'
+To submit to MESATestHub, you need a computer name plus either an API key for
+that computer (recommended; generate one from the computer page on
+MESATestHub) or your email address and password. To actually run a test, you
+need to specify a location for your base MESA git repository. All other data
+are useful, but optional. Any data transferred to MESATestHub will be
+encrypted via HTTPS, but be warned that your password and API key will be
+stored in plain text. An API key can only submit for this one computer and
+can be revoked on its own, so it is the safer thing to store.'
       # Get computer name
       response = shell.ask('What is the name of this computer (required)? ' \
         "(#{s.computer_name}):", :blue)
       s.computer_name = response unless response.empty?
+
+      # Get API key for this computer (preferred over email + password)
+      response = shell.ask 'What is the MESATestHub API key for this ' \
+        'computer (recommended; leave blank to use email and password)? ' \
+        "(#{s.masked_api_key || 'none'}):", :blue
+      s.api_key = response.strip unless response.strip.empty?
 
       # Get user e-mail
       response = shell.ask 'What is the email you can be reached ' \
         "at (required)? (#{s.email}):", :blue
       s.email = response unless response.empty?
 
-      # Get user password
-      response = shell.ask 'What is the password associated with the email ' \
-        "#{s.email} (required)? (#{s.password})", :blue
-      s.password = response unless response.empty?
+      # Get user password (not needed when an API key is set)
+      unless s.api_key
+        response = shell.ask 'What is the password associated with the ' \
+          "email #{s.email} (required without an API key)? (#{s.password})",
+          :blue
+        s.password = response unless response.empty?
+      end
+
+      # Optional run modes this computer can serve when MESATestHub asks for
+      # them (see `mesa_test request_work` and `install_and_test best`)
+      current = s.capabilities.select { |_, on| on }.keys.join(', ')
+      response = shell.ask 'Which optional test modes can this computer ' \
+        'run when a commit asks for them? Any of: full_inlists, fpe, ' \
+        "converge, separated by commas, or 'none'. " \
+        "(#{current.empty? ? 'none' : current}):", :blue
+      s.capabilities = parse_capabilities(response) unless response.strip.empty?
 
       # Get API key for submitting failure logs
       response = shell.ask 'What is the logs submission API token associated '\
@@ -116,9 +138,15 @@ e-mail and password will be stored in plain text.'
     return new_submitter
   end
 
+  # Optional run modes a commit can request through its message
+  # (`[ci optional]`, `[ci fpe]`, `[ci converge]`), in MESATestHub's names.
+  CAPABILITIES = %i[full_inlists fpe converge].freeze
+
   attr_accessor :computer_name, :user_name, :email, :password, :platform,
                 :mesa_mirror, :mesa_work, :platform_version, :processor,
-                :config_file, :base_uri, :github_protocol, :logs_token
+                :config_file, :base_uri, :github_protocol, :logs_token,
+                :capabilities
+  attr_writer :api_key
 
   attr_reader :shell
 
@@ -153,8 +181,12 @@ e-mail and password will be stored in plain text.'
     @processor = processor || ''
     @config_file = config_file || File.join(ENV['HOME'], '.mesa_test',
                                             'config.yml')
-    @base_uri = base_uri
+    # MESATESTHUB_URL points the client at another testhub (a local dev
+    # server, staging) without editing MODE in bin/mesa_test.
+    @base_uri = ENV['MESATESTHUB_URL'] || base_uri
     @logs_token = logs_token || ENV['MESA_LOGS_TOKEN']
+    @api_key = nil
+    @capabilities = CAPABILITIES.map { |c| [c, false] }.to_h
 
     # set up thor-proof way to get responses from user. Thor hijacks the
     # gets command, so we have to use its built-in "ask" method, which is
@@ -169,12 +201,33 @@ e-mail and password will be stored in plain text.'
     yield self if block_given?
   end
 
+  # The per-computer API key: MESATESTHUB_API_KEY from the environment wins
+  # over the config file, so a cluster job can supply it without the key
+  # ever being written to disk. nil means "use email + password".
+  def api_key
+    key = ENV['MESATESTHUB_API_KEY'] || @api_key
+    key.nil? || key.strip.empty? ? nil : key.strip
+  end
+
+  def masked_api_key
+    key = api_key
+    key && "#{key[0, 10]}..."
+  end
+
+  # "fpe, full_inlists" => { full_inlists: true, fpe: true, converge: false }
+  def parse_capabilities(text)
+    wanted = text.downcase.split(/[\s,]+/).map(&:to_sym)
+    CAPABILITIES.map { |c| [c, wanted.include?(c)] }.to_h
+  end
+
   def confirm_computer_data
     puts 'Ready to submit the following data:'
     puts '-------------------------------------------------------'
     puts "Computer Name           #{computer_name}"
+    puts "API key                 #{masked_api_key || 'none (using email + password)'}"
     puts "User email              #{email}"
-    puts 'Password                ***********'
+    puts 'Password                ***********' unless api_key
+    puts "Optional test modes     #{capabilities.select { |_, on| on }.keys.join(', ').then { |c| c.empty? ? 'none' : c }}"
     puts "logs API token          #{logs_token}"
     puts "GitHub Protocol         #{github_protocol}"
     puts "MESA Mirror Location    #{mesa_mirror}"
@@ -198,6 +251,8 @@ e-mail and password will be stored in plain text.'
       'computer_name' => computer_name,
       'email' => email,
       'password' => password,
+      'api_key' => @api_key,
+      'capabilities' => capabilities.select { |_, on| on }.keys.map(&:to_s),
       'logs_token' => logs_token,
       'github_protocol' => github_protocol,
       'mesa_mirror' => mesa_mirror,
@@ -217,6 +272,8 @@ e-mail and password will be stored in plain text.'
     @computer_name = data_hash['computer_name']
     @email = data_hash['email']
     @password = data_hash['password']
+    @api_key = data_hash['api_key']
+    @capabilities = parse_capabilities(Array(data_hash['capabilities']).join(','))
     @logs_token = data_hash['logs_token']
     @github_protocol = data_hash['github_protocol'].to_sym
     @mesa_mirror = data_hash['mesa_mirror']
@@ -226,14 +283,27 @@ e-mail and password will be stored in plain text.'
   end
 
   # Parameters to be submitted in JSON format for reporting information about
-  # the submitting user and computer
+  # the submitting user and computer. With an API key the key identifies the
+  # computer, so email and password stay home.
   def submitter_params
-    {
-      email: email,
-      password: password,
-      computer: computer_name,
-      platform_version: platform_version
-    }
+    if api_key
+      { computer: computer_name, platform_version: platform_version }
+    else
+      {
+        email: email,
+        password: password,
+        computer: computer_name,
+        platform_version: platform_version
+      }
+    end
+  end
+
+  # Headers for every MESATestHub request.
+  def testhub_headers(json_body: true)
+    headers = { 'Accept' => 'application/json' }
+    headers['Content-Type'] = 'application/json' if json_body
+    headers['Authorization'] = "Bearer #{api_key}" if api_key
+    headers
   end
 
   # Parameters to be submitted in JSON format for reporting information about
@@ -285,6 +355,19 @@ e-mail and password will be stored in plain text.'
     res
   end
 
+  # The build's recorded run modes in the submissions API's `claim:` block
+  # (use_* flags; informational on the server, which reads the modes each
+  # test actually ran with from its testhub.yml).
+  def run_mode_params(mesa)
+    modes = mesa.recorded_run_modes
+    {
+      use_fpe: modes[:fpe] == true,
+      use_full_inlists: modes[:skip_optional] == false,
+      use_converge: modes[:resolution_factor].is_a?(String) ||
+                    modes[:resolution_factor].is_a?(Numeric)
+    }
+  end
+
   # Parameters for reporting a failed compilation to the logs server
   def build_log_params(mesa)
     {
@@ -322,14 +405,10 @@ e-mail and password will be stored in plain text.'
     https = Net::HTTP.new(uri.hostname, uri.port)
     https.use_ssl = base_uri.include? 'https'
 
-    request = Net::HTTP::Post.new(
-      uri, initheader = { 'Accept' => 'application/json', 'Content-Type' => 'application/json' }
-    )
-    request.body = {
-      email: email,
-      password: password,
-      computer_name: computer_name
-    }.to_json
+    request = Net::HTTP::Post.new(uri, testhub_headers)
+    body = { computer_name: computer_name }
+    body.merge!(email: email, password: password) unless api_key
+    request.body = body.to_json
     response = testhub_request(https, request)
     # if the hub was unreachable, behave as an unverified computer; the
     # network error has already been reported by testhub_request
@@ -349,10 +428,7 @@ e-mail and password will be stored in plain text.'
     https = Net::HTTP.new(uri.hostname, uri.port)
     https.use_ssl = true if base_uri.include? 'https'
 
-    request = Net::HTTP::Post.new(
-      uri,
-      initheader = { 'Accept' => 'application/json', 'Content-Type' => 'application/json' }
-    )
+    request = Net::HTTP::Post.new(uri, testhub_headers)
 
     # create the request body for submission to the submissions API
     # 
@@ -363,6 +439,7 @@ e-mail and password will be stored in plain text.'
     empty ||= !mesa.installed?
     request_data = {submitter: submitter_params,
                     commit: commit_params(mesa, empty: empty, entire: !empty)}
+    request_data[:claim] = run_mode_params(mesa) if mesa.recorded_run_modes.any?
     # don't need test instances if it's an empty submission or if compilation
     # failed
     if !empty && request_data[:commit][:compiled]
@@ -421,10 +498,7 @@ e-mail and password will be stored in plain text.'
     https = Net::HTTP.new(uri.hostname, uri.port)
     https.use_ssl = true if base_uri.include? 'https'
 
-    request = Net::HTTP::Post.new(
-      uri,
-      initheader = { 'Accept' => 'application/json', 'Content-Type' => 'application/json' }
-    )
+    request = Net::HTTP::Post.new(uri, testhub_headers)
 
     # create the request body for submission to the submissions API
     # 
@@ -433,6 +507,7 @@ e-mail and password will be stored in plain text.'
     request_data = {submitter: submitter_params,
                     commit: commit_params(mesa, empty: false, entire: false),
                     instances: single_instance_params(test_case)}
+    request_data[:claim] = run_mode_params(mesa) if mesa.recorded_run_modes.any?
     request.body = request_data.to_json
 
     # actually do the submission
@@ -583,23 +658,88 @@ e-mail and password will be stored in plain text.'
     get_search('/test_instances/search_count.json', query_text)
   end
 
+  # Ask MESATestHub what this computer should do next (POST /api/v1/dispatch).
+  # +scope+ is 'build' (which commit to build) or 'test' (which test to run;
+  # pass the +sha+ you built). +capabilities+ defaults to the configured
+  # optional modes; for a test, +fpe+ should say whether *this build* has
+  # FPE checks, since MESA_FPE_CHECKS_ON is a compile-time switch.
+  #
+  # Returns the recommendation as a Hash (commit_sha, branch, scope,
+  # test_case_module, test_case_name, flags, reasons, ...), or nil when
+  # there's nothing useful to do. Raises TestHubError on any other answer.
+  def dispatch(scope:, sha: nil, capabilities: self.capabilities)
+    body = { scope: scope }
+    body[:commit_sha] = sha if sha
+    CAPABILITIES.each { |c| body[:"can_#{c}"] = !!capabilities[c] }
+    response = post_testhub('/api/v1/dispatch', submitter: submitter_params, dispatch: body)
+    raise TestHubError, 'Dispatch failed: could not reach MESATestHub.' if response.nil?
+    return nil if response.is_a?(Net::HTTPNoContent)
+    return JSON.parse(response.body) if response.is_a?(Net::HTTPSuccess)
+
+    raise TestHubError, "Dispatch failed (HTTP #{response.code}): #{error_message(response)}"
+  end
+
+  # Tell MESATestHub this computer is about to build +sha+ (scope 'build') or
+  # run a test on it (scope 'test' with +mod+ and +test_case+, or
+  # +all_test_cases: true+ for the whole suite). The commit then shows as
+  # pending instead of untested. The later submission fulfills the claim by
+  # matching computer, commit, and test, so nothing needs remembering here.
+  #
+  # Claims are advisory: a failure is reported and swallowed (returns nil) so
+  # it never stops a test run.
+  def claim(sha:, scope:, mod: nil, test_case: nil, all_test_cases: false,
+            flags: {}, dispatched_at: nil)
+    body = { commit_sha: sha, scope: scope }
+    body[:test_case_module] = mod.to_s if mod
+    body[:test_case_name] = test_case if test_case
+    body[:all_test_cases] = true if all_test_cases
+    body[:dispatched_at] = dispatched_at if dispatched_at
+    CAPABILITIES.each { |c| body[:"use_#{c}"] = !!flags[c] }
+    response = post_testhub('/api/v1/claims', submitter: submitter_params, claim: body)
+    return nil if response.nil? # unreachable; testhub_request said so
+    return JSON.parse(response.body) if response.is_a?(Net::HTTPCreated)
+
+    shell.say "Could not claim #{claim_label(scope, mod, test_case, all_test_cases)} " \
+              "(HTTP #{response.code}: #{error_message(response)}); continuing anyway.",
+              :yellow
+    nil
+  end
+
   private
+
+  # POST JSON to the hub with testhub_request's bounded timeouts. Returns
+  # the response, or nil after a network failure (already reported).
+  def post_testhub(path, payload)
+    uri = URI.parse(base_uri + path)
+    https = Net::HTTP.new(uri.hostname, uri.port)
+    https.use_ssl = base_uri.include? 'https'
+    request = Net::HTTP::Post.new(uri, testhub_headers)
+    request.body = payload.to_json
+    testhub_request(https, request)
+  end
+
+  def error_message(response)
+    JSON.parse(response.body.to_s)['error'] || response.message
+  rescue JSON::ParserError
+    response.message
+  end
+
+  def claim_label(scope, mod, test_case, all_test_cases)
+    return 'the build' if scope.to_s == 'build'
+    return 'every test' if all_test_cases
+    "#{mod}/#{test_case}"
+  end
 
   def get_search(path, query_text)
     uri = URI.parse(base_uri + path)
-    uri.query = URI.encode_www_form(
-      email: email,
-      password: password,
-      query_text: query_text
-    )
+    query = { query_text: query_text }
+    query = { email: email, password: password }.merge(query) unless api_key
+    uri.query = URI.encode_www_form(query)
 
     https = Net::HTTP.new(uri.hostname, uri.port)
     https.use_ssl = base_uri.include? 'https'
 
-    request = Net::HTTP::Get.new(
-      uri,
-      initheader = { 'Accept' => 'application/json' }
-    )
+    request = Net::HTTP::Get.new(uri, testhub_headers(json_body: false))
 
     https.request(request)
   end
@@ -792,21 +932,63 @@ class Mesa
     b64_file(build_log)
   end
 
+  COMPILER_KEYS = %i[compiler compiler_version sdk_version math_backend].freeze
+
   # sourced from $MESA_DIR/testhub.yml, which should be created after
-  # installation
+  # installation. Only the compiler keys are taken: the file also carries
+  # mesa_test's own run-mode block (see #record_run_modes), which doesn't
+  # belong in the commit payload.
   def compiler_hash
-    data_file = File.join(mesa_dir, 'testhub.yml')
     res = {
             compiler: 'Unknown',
             sdk_version: 'Unknown',
             math_backend: 'Unknown'
           }
-    if File.exist? data_file
-      res = res.merge(YAML.safe_load(File.read(data_file)) || {})
-      # currently version_number is reported, but we don't need that in Git land
-      res.delete('version_number') # returns the value, not the updated hash
-      res
+    # testhub.yml has string keys; symbolize them so they replace the
+    # defaults above rather than sitting beside them as duplicate keys
+    # (which json >= 3 refuses to serialize).
+    found = install_data.transform_keys(&:to_sym).slice(*COMPILER_KEYS)
+    res.merge(found)
+  end
+
+  # The key under which `mesa_test install` records, in $MESA_DIR/testhub.yml,
+  # the run modes this build was made for. The file is written by MESA's own
+  # install (math/test), so it is recreated on every build and can't go stale.
+  RUN_MODES_KEY = 'mesa_test_run_modes'.freeze
+
+  # Run modes recorded at install, as a hash with any of
+  #   fpe:               true/false (compiled with MESA_FPE_CHECKS_ON?)
+  #   skip_optional:     true/false (MESA_SKIP_OPTIONAL set or unset)
+  #   resolution_factor: a factor string, or false for "unset"
+  # Only modes that were explicitly chosen at install are present; anything
+  # absent falls back to the caller's environment.
+  def recorded_run_modes
+    (install_data[RUN_MODES_KEY] || {}).transform_keys(&:to_sym)
+                                       .slice(*RUN_MODE_KEYS)
+  end
+
+  # Append the modes chosen for this build to testhub.yml. Call after the
+  # install, which rewrites the file.
+  def record_run_modes(modes)
+    data_file = File.join(mesa_dir, 'testhub.yml')
+    return unless File.exist?(data_file)
+
+    modes = modes.slice(*RUN_MODE_KEYS)
+    return if modes.empty?
+
+    block = { RUN_MODES_KEY => modes.transform_keys(&:to_s) }.to_yaml.sub(/\A---\n/, '')
+    File.open(data_file, 'a') do |f|
+      f.puts '# Added by mesa_test install: the run modes this build was made for.'
+      f.puts '# `mesa_test test` applies them unless told otherwise.'
+      f.write block
     end
+  end
+
+  def install_data
+    data_file = File.join(mesa_dir, 'testhub.yml')
+    return {} unless File.exist?(data_file)
+
+    YAML.safe_load(File.read(data_file)) || {}
   end
 
   ## TEST SUITE METHODS
@@ -1222,6 +1404,64 @@ end
 # status (like backticks)
 def bashticks(command)
   `bash -c "#{command}"`.chomp
+end
+
+# Run modes: how MESA is told to run a test, and the environment variables
+# behind them. MESA's each_test_run records each one in the test's
+# testhub.yml (fpe_checks / run_optional / resolution_factor), which is what
+# MESATestHub reads.
+#
+#   fpe:               MESA_FPE_CHECKS_ON=1. Compile-time as well as run-time
+#                      (MESA's make reads it), so it belongs to the build.
+#   skip_optional:     MESA_SKIP_OPTIONAL set. MESA runs every inlist unless
+#                      this is set.
+#   resolution_factor: MESA_TEST_SUITE_RESOLUTION_FACTOR, which is what
+#                      `[ci converge]` sets.
+#
+# A mode that is nil/absent leaves the variable as the user's shell has it.
+RUN_MODE_KEYS = %i[fpe skip_optional resolution_factor].freeze
+DEFAULT_CONVERGE_FACTOR = '0.8'.freeze
+
+# ENV overrides for +modes+ (nil value = unset the variable).
+def run_mode_env(modes)
+  env = {}
+  env['MESA_FPE_CHECKS_ON'] = modes[:fpe] ? '1' : nil unless modes[:fpe].nil?
+  unless modes[:skip_optional].nil?
+    env['MESA_SKIP_OPTIONAL'] = modes[:skip_optional] ? 't' : nil
+  end
+  unless modes[:resolution_factor].nil?
+    env['MESA_TEST_SUITE_RESOLUTION_FACTOR'] =
+      modes[:resolution_factor] ? modes[:resolution_factor].to_s : nil
+  end
+  env
+end
+
+# The resolution factor a converge run should use: the user's own, if their
+# shell sets one, else DEFAULT_CONVERGE_FACTOR.
+def converge_factor
+  ENV['MESA_TEST_SUITE_RESOLUTION_FACTOR'] || DEFAULT_CONVERGE_FACTOR
+end
+
+# Run modes a MESATestHub dispatch asked for. Requests only ever *add* to the
+# user's setup: a mode the hub didn't ask for is left out (so the shell
+# decides), never forced off.
+def dispatch_run_modes(rec)
+  flags = rec['flags'] || {}
+  modes = {}
+  modes[:fpe] = true if flags['use_fpe']
+  modes[:skip_optional] = false if flags['use_full_inlists']
+  modes[:resolution_factor] = converge_factor if flags['use_converge']
+  modes
+end
+
+# Run the block with +overrides+ applied to ENV (nil deletes a variable),
+# restoring the previous values afterwards.
+def with_env(overrides)
+  saved = overrides.keys.map { |k| [k, ENV[k]] }.to_h
+  overrides.each { |k, v| v.nil? ? ENV.delete(k) : ENV[k] = v }
+  yield
+ensure
+  saved&.each { |k, v| v.nil? ? ENV.delete(k) : ENV[k] = v }
 end
 
 # encode the contents of a file as base-64

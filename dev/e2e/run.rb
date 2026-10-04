@@ -18,9 +18,10 @@ require 'yaml'
 require 'tmpdir'
 require 'fileutils'
 require 'open3'
+require 'socket'
 
 REPO = File.expand_path('../..', __dir__)
-TESTHUB_DIR = File.expand_path(ENV.fetch('TESTHUB_DIR') { abort 'Set TESTHUB_DIR to a MESATestHub checkout.' })
+TESTHUB_DIR = ENV['TESTHUB_DIR'] && File.expand_path(ENV['TESTHUB_DIR'])
 URL = ENV.fetch('MESATESTHUB_URL', 'http://localhost:3000')
 TESTS = %w[star/fake_alpha star/fake_beta binary/fake_gamma].freeze
 NOTHING_TO_DO_EXIT = 3
@@ -132,6 +133,90 @@ def tests_logged(s)
   s.env_log.grep(/\Atest /)
 end
 
+# A stand-in hub for the "nothing to do" checks: real dev data always has
+# some recent commit to recommend, so this answers check_computer with
+# "valid" and every dispatch with 204, and records every request it sees.
+class StubHub
+  attr_reader :requests
+
+  def initialize
+    @server = TCPServer.new('127.0.0.1', 0)
+    @requests = []
+    @thread = Thread.new { loop { serve(@server.accept) } }
+  end
+
+  def url
+    "http://127.0.0.1:#{@server.addr[1]}"
+  end
+
+  def stop
+    @thread.kill
+    @server.close
+  end
+
+  private
+
+  def serve(client)
+    method, path = client.gets.to_s.split
+    length = 0
+    while (line = client.gets) && line != "\r\n"
+      length = line.split(':', 2).last.to_i if line =~ /\Acontent-length:/i
+    end
+    client.read(length) if length.positive?
+    @requests << "#{method} #{path}"
+    case path
+    when '/check_computer.json'
+      body = '{"valid":true,"message":"stub hub"}'
+      client.write("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n" \
+                   "Content-Length: #{body.bytesize}\r\nConnection: close\r\n\r\n#{body}")
+    when '/api/v1/dispatch'
+      client.write("HTTP/1.1 204 No Content\r\nConnection: close\r\n\r\n")
+    else
+      client.write("HTTP/1.1 500 Internal Server Error\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+    end
+  ensure
+    client.close
+  end
+end
+
+# Run mesa_test with a scratch HOME/config pointed at +url+; [status, output].
+def standalone_mesa_test(dir, url, *args)
+  home = File.join(dir, 'home')
+  FileUtils.mkdir_p(File.join(home, '.mesa_test'))
+  File.write(File.join(home, '.mesa_test', 'config.yml'), {
+    'computer_name' => 'stub-box', 'email' => '', 'password' => '',
+    'api_key' => 'mth_stub', 'capabilities' => [], 'logs_token' => nil,
+    'github_protocol' => :https, 'mesa_mirror' => File.join(dir, 'mirror'),
+    'mesa_work' => File.join(dir, 'work'), 'platform' => 'linux', 'platform_version' => 'e2e'
+  }.to_yaml)
+  cmd = ['ruby', '-I', File.join(REPO, 'lib'), File.join(REPO, 'bin', 'mesa_test'), *args]
+  out, status = Open3.capture2e({ 'HOME' => home, 'MESATESTHUB_URL' => url }, *cmd, chdir: dir)
+  [status.exitstatus, out]
+end
+
+# Same reporting shape as Scenario, for checks that need no testhub fixture.
+class StandaloneCheck
+  attr_reader :failures
+
+  def initialize(name)
+    @name = name
+    @failures = []
+  end
+
+  def run
+    puts "\n== #{@name}"
+    Dir.mktmpdir('mesa_test_e2e') { |dir| yield self, dir }
+  rescue StandardError => e
+    @failures << "#{e.class}: #{e.message}"
+  ensure
+    puts(@failures.empty? ? '   ok' : @failures.map { |f| "   FAIL: #{f}" })
+  end
+
+  def check(condition, message)
+    @failures << message unless condition
+  end
+end
+
 SCENARIOS = {
   # The cluster workflow: install best, submit the build, then one
   # `mesa_test test N` per test (array jobs) in a shell that skips optional
@@ -196,6 +281,38 @@ SCENARIOS = {
     end
   end,
 
+  # When the hub has nothing for this computer, every dispatching command
+  # exits NOTHING_TO_DO_EXIT without touching the work directory or claiming
+  # anything -- and an unreachable hub is an ordinary failure, not "nothing
+  # to do", so scripts can tell the two apart. Needs no testhub server.
+  'nothing' => lambda do
+    check = StandaloneCheck.new('nothing to do: exit 3, work dir untouched')
+    check.run do |c, dir|
+      hub = StubHub.new
+      begin
+        [%w[install best], %w[install_and_test best], %w[request_work],
+         %w[request_work --scope=test --sha=0123456789abcdef0123456789abcdef01234567]].each do |args|
+          status, out = standalone_mesa_test(dir, hub.url, *args)
+          c.check(status == NOTHING_TO_DO_EXIT,
+                  "`mesa_test #{args.join(' ')}` exited #{status.inspect}, not #{NOTHING_TO_DO_EXIT}:\n#{out}")
+        end
+        c.check(!File.exist?(File.join(dir, 'work')), 'the work directory was created')
+        stray = hub.requests.reject { |r| r.end_with?('/api/v1/dispatch', '/check_computer.json') }
+        c.check(stray.empty?, "unexpected requests to the hub: #{stray}")
+      ensure
+        hub.stop
+      end
+
+      closed = TCPServer.new('127.0.0.1', 0)
+      port = closed.addr[1]
+      closed.close
+      status, out = standalone_mesa_test(dir, "http://127.0.0.1:#{port}", 'install', 'best')
+      c.check(![0, NOTHING_TO_DO_EXIT].include?(status),
+              "an unreachable hub exited #{status.inspect}:\n#{out}")
+    end
+    check
+  end,
+
   # Old-style whole-suite run with email + password and an explicit SHA:
   # still works, claims everything up front, one submission fulfills it all.
   'legacy' => lambda do
@@ -221,6 +338,11 @@ SCENARIOS = {
 wanted = ARGV.empty? ? SCENARIOS.keys : ARGV
 unknown = wanted - SCENARIOS.keys
 abort "Unknown scenario(s): #{unknown.join(', ')}. Known: #{SCENARIOS.keys.join(', ')}" if unknown.any?
+
+needs_testhub = wanted - %w[nothing]
+if needs_testhub.any? && TESTHUB_DIR.nil?
+  abort "Set TESTHUB_DIR to a MESATestHub checkout (needed for: #{needs_testhub.join(', ')})."
+end
 
 results = wanted.map { |name| SCENARIOS.fetch(name).call }
 failed = results.reject { |r| r.failures.empty? }

@@ -11,7 +11,7 @@ bin/rails server
 # in this repo
 TESTHUB_DIR=~/Repositories/MESATestHub \
 MESATESTHUB_URL=http://localhost:3000 \
-ruby dev/e2e/run.rb              # or name scenarios: cluster best legacy
+ruby dev/e2e/run.rb              # or name scenarios: cluster best nothing legacy
 ```
 
 How it works:
@@ -38,6 +38,7 @@ Scenarios:
 |---|---|
 | `cluster` | `install best` → `submit --empty` → one `test N` per test (array jobs) in a shell with `MESA_SKIP_OPTIONAL` set. Checks: the modes recorded in `testhub.yml` win over the shell; an explicit `test` flag wins over the record, except FPE; all claims fulfilled; requests satisfied. |
 | `best` | `install_and_test best` on an `[ci optional] [ci converge]` commit. Checks: each test runs once per mode and never both at once; then `request_work` exits 3. |
+| `nothing` | Runs against a stub hub that always answers "nothing to do" (no testhub needed). Checks: `install best`, `install_and_test best`, and `request_work` exit 3 without creating the work directory or claiming anything. An unreachable hub must fail some other way, so scripts can tell "nothing to do" from "couldn't ask". |
 | `legacy` | Email + password, explicit SHA, whole suite in one go. Checks: claims up front, one `entire` submission fulfills them all, and `count` works. |
 
 The testhub server must run from the same checkout as `TESTHUB_DIR` so

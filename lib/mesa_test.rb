@@ -181,7 +181,9 @@ can be revoked on its own, so it is the safer thing to store.'
     @processor = processor || ''
     @config_file = config_file || File.join(ENV['HOME'], '.mesa_test',
                                             'config.yml')
-    @base_uri = base_uri
+    # MESATESTHUB_URL points the client at another testhub (a local dev
+    # server, staging) without editing MODE in bin/mesa_test.
+    @base_uri = ENV['MESATESTHUB_URL'] || base_uri
     @logs_token = logs_token || ENV['MESA_LOGS_TOKEN']
     @api_key = nil
     @capabilities = CAPABILITIES.map { |c| [c, false] }.to_h
@@ -353,6 +355,19 @@ can be revoked on its own, so it is the safer thing to store.'
     res
   end
 
+  # The build's recorded run modes in the submissions API's `claim:` block
+  # (use_* flags; informational on the server, which reads the modes each
+  # test actually ran with from its testhub.yml).
+  def run_mode_params(mesa)
+    modes = mesa.recorded_run_modes
+    {
+      use_fpe: modes[:fpe] == true,
+      use_full_inlists: modes[:skip_optional] == false,
+      use_converge: modes[:resolution_factor].is_a?(String) ||
+                    modes[:resolution_factor].is_a?(Numeric)
+    }
+  end
+
   # Parameters for reporting a failed compilation to the logs server
   def build_log_params(mesa)
     {
@@ -419,6 +434,7 @@ can be revoked on its own, so it is the safer thing to store.'
     empty ||= !mesa.installed?
     request_data = {submitter: submitter_params,
                     commit: commit_params(mesa, empty: empty, entire: !empty)}
+    request_data[:claim] = run_mode_params(mesa) if mesa.recorded_run_modes.any?
     # don't need test instances if it's an empty submission or if compilation
     # failed
     if !empty && request_data[:commit][:compiled]
@@ -482,6 +498,7 @@ can be revoked on its own, so it is the safer thing to store.'
     request_data = {submitter: submitter_params,
                     commit: commit_params(mesa, empty: false, entire: false),
                     instances: single_instance_params(test_case)}
+    request_data[:claim] = run_mode_params(mesa) if mesa.recorded_run_modes.any?
     request.body = request_data.to_json
 
     # actually do the submission
@@ -861,24 +878,63 @@ class Mesa
     b64_file(build_log)
   end
 
+  COMPILER_KEYS = %i[compiler compiler_version sdk_version math_backend].freeze
+
   # sourced from $MESA_DIR/testhub.yml, which should be created after
-  # installation
+  # installation. Only the compiler keys are taken: the file also carries
+  # mesa_test's own run-mode block (see #record_run_modes), which doesn't
+  # belong in the commit payload.
   def compiler_hash
-    data_file = File.join(mesa_dir, 'testhub.yml')
     res = {
             compiler: 'Unknown',
             sdk_version: 'Unknown',
             math_backend: 'Unknown'
           }
-    if File.exist? data_file
-      # testhub.yml has string keys; symbolize them so they replace the
-      # defaults above rather than sitting beside them as duplicate keys
-      # (which json >= 3 refuses to serialize).
-      res = res.merge((YAML.safe_load(File.read(data_file)) || {}).transform_keys(&:to_sym))
-      # currently version_number is reported, but we don't need that in Git land
-      res.delete(:version_number) # returns the value, not the updated hash
-      res
+    # testhub.yml has string keys; symbolize them so they replace the
+    # defaults above rather than sitting beside them as duplicate keys
+    # (which json >= 3 refuses to serialize).
+    found = install_data.transform_keys(&:to_sym).slice(*COMPILER_KEYS)
+    res.merge(found)
+  end
+
+  # The key under which `mesa_test install` records, in $MESA_DIR/testhub.yml,
+  # the run modes this build was made for. The file is written by MESA's own
+  # install (math/test), so it is recreated on every build and can't go stale.
+  RUN_MODES_KEY = 'mesa_test_run_modes'.freeze
+
+  # Run modes recorded at install, as a hash with any of
+  #   fpe:               true/false (compiled with MESA_FPE_CHECKS_ON?)
+  #   skip_optional:     true/false (MESA_SKIP_OPTIONAL set or unset)
+  #   resolution_factor: a factor string, or false for "unset"
+  # Only modes that were explicitly chosen at install are present; anything
+  # absent falls back to the caller's environment.
+  def recorded_run_modes
+    (install_data[RUN_MODES_KEY] || {}).transform_keys(&:to_sym)
+                                       .slice(*RUN_MODE_KEYS)
+  end
+
+  # Append the modes chosen for this build to testhub.yml. Call after the
+  # install, which rewrites the file.
+  def record_run_modes(modes)
+    data_file = File.join(mesa_dir, 'testhub.yml')
+    return unless File.exist?(data_file)
+
+    modes = modes.slice(*RUN_MODE_KEYS)
+    return if modes.empty?
+
+    block = { RUN_MODES_KEY => modes.transform_keys(&:to_s) }.to_yaml.sub(/\A---\n/, '')
+    File.open(data_file, 'a') do |f|
+      f.puts '# Added by mesa_test install: the run modes this build was made for.'
+      f.puts '# `mesa_test test` applies them unless told otherwise.'
+      f.write block
     end
+  end
+
+  def install_data
+    data_file = File.join(mesa_dir, 'testhub.yml')
+    return {} unless File.exist?(data_file)
+
+    YAML.safe_load(File.read(data_file)) || {}
   end
 
   ## TEST SUITE METHODS
@@ -1296,31 +1352,52 @@ def bashticks(command)
   `bash -c "#{command}"`.chomp
 end
 
-# Environment for running MESA in the modes MESATestHub asked for. +flags+ is
-# a hash keyed by MesaTestSubmitter::CAPABILITIES (as in a dispatch
-# response's `flags`, with the use_ prefix stripped). A false flag leaves the
-# user's own environment alone; flags only ever ask for *more*:
+# Run modes: how MESA is told to run a test, and the environment variables
+# behind them. MESA's each_test_run records each one in the test's
+# testhub.yml (fpe_checks / run_optional / resolution_factor), which is what
+# MESATestHub reads.
 #
-#   full_inlists: unset MESA_SKIP_OPTIONAL, so optional inlists run
-#   fpe:          MESA_FPE_CHECKS_ON=1 (compile-time too: set it for the
-#                 install as well as every test of that build)
-#   converge:     MESA_TEST_SUITE_RESOLUTION_FACTOR, keeping the user's value
-#                 if set, else DEFAULT_CONVERGE_FACTOR
+#   fpe:               MESA_FPE_CHECKS_ON=1. Compile-time as well as run-time
+#                      (MESA's make reads it), so it belongs to the build.
+#   skip_optional:     MESA_SKIP_OPTIONAL set. MESA runs every inlist unless
+#                      this is set.
+#   resolution_factor: MESA_TEST_SUITE_RESOLUTION_FACTOR, which is what
+#                      `[ci converge]` sets.
 #
-# MESA's each_test_run records all three in each test's testhub.yml
-# (run_optional / fpe_checks / resolution_factor), which is what MESATestHub
-# reads to decide a request has been met.
+# A mode that is nil/absent leaves the variable as the user's shell has it.
+RUN_MODE_KEYS = %i[fpe skip_optional resolution_factor].freeze
 DEFAULT_CONVERGE_FACTOR = '0.8'.freeze
 
-def run_flag_env(flags)
+# ENV overrides for +modes+ (nil value = unset the variable).
+def run_mode_env(modes)
   env = {}
-  env['MESA_SKIP_OPTIONAL'] = nil if flags[:full_inlists]
-  env['MESA_FPE_CHECKS_ON'] = '1' if flags[:fpe]
-  if flags[:converge]
+  env['MESA_FPE_CHECKS_ON'] = modes[:fpe] ? '1' : nil unless modes[:fpe].nil?
+  unless modes[:skip_optional].nil?
+    env['MESA_SKIP_OPTIONAL'] = modes[:skip_optional] ? 't' : nil
+  end
+  unless modes[:resolution_factor].nil?
     env['MESA_TEST_SUITE_RESOLUTION_FACTOR'] =
-      ENV['MESA_TEST_SUITE_RESOLUTION_FACTOR'] || DEFAULT_CONVERGE_FACTOR
+      modes[:resolution_factor] ? modes[:resolution_factor].to_s : nil
   end
   env
+end
+
+# The resolution factor a converge run should use: the user's own, if their
+# shell sets one, else DEFAULT_CONVERGE_FACTOR.
+def converge_factor
+  ENV['MESA_TEST_SUITE_RESOLUTION_FACTOR'] || DEFAULT_CONVERGE_FACTOR
+end
+
+# Run modes a MESATestHub dispatch asked for. Requests only ever *add* to the
+# user's setup: a mode the hub didn't ask for is left out (so the shell
+# decides), never forced off.
+def dispatch_run_modes(rec)
+  flags = rec['flags'] || {}
+  modes = {}
+  modes[:fpe] = true if flags['use_fpe']
+  modes[:skip_optional] = false if flags['use_full_inlists']
+  modes[:resolution_factor] = converge_factor if flags['use_converge']
+  modes
 end
 
 # Run the block with +overrides+ applied to ENV (nil deletes a variable),
@@ -1331,11 +1408,6 @@ def with_env(overrides)
   yield
 ensure
   saved&.each { |k, v| v.nil? ? ENV.delete(k) : ENV[k] = v }
-end
-
-# Dispatch flags ({ "use_fpe" => true, ... }) as capability-keyed symbols.
-def dispatch_flags(rec)
-  (rec['flags'] || {}).map { |k, v| [k.to_s.delete_prefix('use_').to_sym, v] }.to_h
 end
 
 # encode the contents of a file as base-64

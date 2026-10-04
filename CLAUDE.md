@@ -32,6 +32,16 @@ MESATestHub can tell a computer what to work on and track what is in flight. The
   - The client never stores claim ids. The server fulfills claims by matching computer, commit, and test when the submission arrives.
   - `install`, `test`, and `install_and_test` claim by default; turn it off with `--no-claim`.
   - Whole-suite runs claim with `all_test_cases: true`, and only when `--module` is `all`.
+- **Run modes are recorded in the work dir.**
+  - `install` appends a `mesa_test_run_modes:` block (`fpe`, `skip_optional`, `resolution_factor`) to `$MESA_DIR/testhub.yml`, after the compiler keys MESA's install writes. See `Mesa#record_run_modes` / `#recorded_run_modes`.
+  - It's the single source of truth for later `test` and `submit` runs on that build, e.g. cluster array jobs running `mesa_test test N` with no flags. `submit` sends them as the `claim:` block's `use_*` flags.
+  - Precedence when running tests: an explicit flag on `test`, then the recorded mode, then the shell's environment.
+  - FPE always follows the build, since it's compiled in. A conflicting `--fpe`/`--no-fpe` on `test` is ignored with a warning.
+  - `compiler_hash` takes only the four compiler keys from the file, so the block never leaks into the commit payload.
+- **Mode flags:** `--skip-optional` (MESA runs optional inlists unless `MESA_SKIP_OPTIONAL` is set, hence the name), `--fpe`, `--converge`, each with a `--no-` form; unset means "not specified".
+  - With an explicit SHA they set the modes directly.
+  - With `best` they say what the computer is *willing* to do, overriding config `capabilities`, and the hub's request decides the actual modes.
+- **Nothing to do exits 3** (`MesaTest::NOTHING_TO_DO_EXIT`), for `install best`, `install_and_test best`, and `request_work`. It exits before touching the work dir, so scripts can do `mesa_test install best || exit`.
 - **`install_and_test best` / `install best`:**
   - The server picks the commit.
   - `best` mode then submits the build on its own, and loops test-scope dispatch (pinned to the built SHA) → claim → run → `submit_instance` until it gets a 204.
@@ -42,7 +52,7 @@ MESATestHub can tell a computer what to work on and track what is in flight. The
   - `full_inlists` unsets `MESA_SKIP_OPTIONAL`.
   - `converge` sets `MESA_TEST_SUITE_RESOLUTION_FACTOR` (the user's value if set, else 0.8).
   - `fpe` sets `MESA_FPE_CHECKS_ON=1`. It is **compile-time** (MESA's make reads it), so it is applied to the install and every test of that build. In test-scope dispatch, `can_fpe` means "this build has FPE checks".
-- **Capabilities:** the optional modes a computer can run live in config under `capabilities: [full_inlists, fpe, converge]`, set in the setup wizard. Override per run with `--modes`.
+- **Capabilities:** the optional modes a computer can run live in config under `capabilities: [full_inlists, fpe, converge]`, set in the setup wizard. Override per run with the mode flags.
 
 ## Submission targets
 
@@ -86,7 +96,9 @@ The built `.gem` is sometimes checked in alongside the gemspec (see `mesa_test-1
 
 ## Testing
 
-There is no automated test suite. Validation is manual: flip `MODE` to `:development` or `:staging`, point at a local MESATestHub, and exercise the CLI against a real MESA checkout. Don't add fake unit tests just because they're conventional — the value here is end-to-end against an actual MESA install and testhub instance.
+**End-to-end harness:** [dev/e2e/](dev/e2e/README.md) runs real CLI commands against a MESATestHub dev server, using a fake MESA tree plus the testhub's `dev:client_fixture:*` rake tasks. `MESATESTHUB_URL` points any `mesa_test` at another testhub without editing `MODE`. Run it before releasing anything that touches the network or run-mode code.
+
+Otherwise there is no automated test suite. Validation is manual: flip `MODE` to `:development` or `:staging`, point at a local MESATestHub, and exercise the CLI against a real MESA checkout. Don't add fake unit tests just because they're conventional — the value here is end-to-end against an actual MESA install and testhub instance.
 
 ## Conventions worth knowing
 

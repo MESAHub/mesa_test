@@ -70,6 +70,7 @@ class Scenario
     cmd = ['ruby', '-I', File.join(REPO, 'lib'), File.join(REPO, 'bin', 'mesa_test'), *args]
     out, status = Open3.capture2e({ 'HOME' => home, 'MESATESTHUB_URL' => URL }.merge(env), *cmd,
                                   chdir: @dir)
+    out = utf8(out)
     File.write(File.join(@dir, "mesa_test-#{args.first}.log"), out, mode: 'a')
     [status.exitstatus, out]
   end
@@ -116,9 +117,16 @@ class Scenario
   def rails(task, env = {})
     out, status = Open3.capture2e({ 'DISABLE_SPRING' => '1' }.merge(env), 'bin/rails', task,
                                   chdir: TESTHUB_DIR)
+    out = utf8(out)
     raise "bin/rails #{task} failed:\n#{out}" unless status.success?
 
     out.lines.last.to_s.strip
+  end
+
+  # Subprocess output is UTF-8 (e.g. the "·" in claim environments)
+  # whatever the shell's locale says.
+  def utf8(text)
+    text.dup.force_encoding(Encoding::UTF_8)
   end
 
   def sh!(*cmd)
@@ -224,7 +232,7 @@ SCENARIOS = {
   'cluster' => lambda do
     Scenario.new('cluster: install best / submit --empty / test N',
                  wants: %w[optional fpe], auth: :key, capabilities: %w[full_inlists]).run do |s|
-      shell = { 'MESA_SKIP_OPTIONAL' => 't' }
+      shell = { 'MESA_SKIP_OPTIONAL' => 't', 'OMP_NUM_THREADS' => '3', 'MESASDK_VERSION' => 'e2e-sdk' }
       status, = s.mesa_test('install', 'best', '--fpe', env: shell)
       s.check(status.zero?, "install best exited #{status}")
       s.check(s.env_log.first == 'install fpe=1', "install env was #{s.env_log.first.inspect}")
@@ -247,6 +255,13 @@ SCENARIOS = {
       r = s.report
       s.check(r['claims'].any? && r['claims'].all? { |c| c['status'] == 'fulfilled' },
               "claims not all fulfilled: #{r['claims']}")
+      # Claims say what they run on: test claims from the build's own
+      # testhub.yml, the build claim from the shell (made before compiling).
+      tests_env = r['claims'].select { |c| c['scope'] == 'test' }.map { |c| c['environment'] }.uniq
+      s.check(tests_env == ['SDK aarch64-macos-26.3.2 · gfortran 15.2.0 · CRMATH · 3 threads · linux e2e'],
+              "test claims' environment: #{tests_env}")
+      build_env = r['claims'].find { |c| c['scope'] == 'build' }&.dig('environment')
+      s.check(build_env == 'SDK e2e-sdk · 3 threads · linux e2e', "build claim's environment: #{build_env.inspect}")
       build = r['submissions'].find { |sub| sub['empty'] }
       s.check(build && build['use_fpe'] && build['use_full_inlists'],
               "build submission didn't carry its modes: #{build.inspect}")

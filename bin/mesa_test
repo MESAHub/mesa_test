@@ -108,7 +108,7 @@ class MesaTest < Thor
 
           if options[:submit] && options[:claim]
             s.claim(sha: m.sha, scope: 'test', mod: t.mod, test_case: t.test_name,
-                    flags: claim_flags(modes))
+                    flags: claim_flags(modes), mesa: m)
           end
 
           # run test
@@ -551,7 +551,7 @@ class MesaTest < Thor
         end
         if options[:claim]
           s.claim(sha: m.sha, scope: 'test', mod: t.mod, test_case: t.test_name,
-                  flags: claim_flags(modes), dispatched_at: rec['dispatched_at'])
+                  flags: claim_flags(modes), dispatched_at: rec['dispatched_at'], mesa: m)
         end
         with_env(run_mode_env(modes)) { t.do_one }
         all_submitted &&= s.submit_instance(m, t, force_logs: options['force-logs'])
@@ -566,7 +566,7 @@ class MesaTest < Thor
   def claim_all_tests(s, m, flags: {})
     return unless options[:module].to_s.downcase == 'all'
 
-    s.claim(sha: m.sha, scope: 'test', all_test_cases: true, flags: flags)
+    s.claim(sha: m.sha, scope: 'test', all_test_cases: true, flags: flags, mesa: m)
   end
 
   # clean + install +m+ with +modes+ in the environment, then record the

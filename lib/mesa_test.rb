@@ -674,6 +674,27 @@ can be revoked on its own, so it is the safer thing to store.'
     get_search('/test_instances/search_count.json', query_text)
   end
 
+  # What a claimed run is running on, for MESATestHub to show on pending
+  # tests (so a long-running claim can be explained: an old machine on two
+  # threads, a different SDK). Only what's actually known is sent:
+  #   - with a built +mesa+, its testhub.yml compiler record (SDK, compiler,
+  #     math backend), which is accurate even if the shell's SDK changed
+  #   - otherwise (a build claim, made before compiling) just the SDK the
+  #     shell has active, from mesasdk_init.sh's MESASDK_VERSION
+  #   - OMP_NUM_THREADS and this computer's platform version
+  def claim_environment(mesa = nil)
+    env = {}
+    if mesa&.install_attempted?
+      env.merge!(mesa.compiler_hash.reject { |_k, v| v.to_s.strip.empty? || v == 'Unknown' })
+    end
+    sdk = ENV['MESASDK_VERSION'].to_s.strip
+    env[:sdk_version] ||= sdk unless sdk.empty?
+    threads = ENV['OMP_NUM_THREADS'].to_i
+    env[:omp_num_threads] = threads if threads.positive?
+    env[:platform_version] = platform_version unless platform_version.to_s.strip.empty?
+    env
+  end
+
   # Ask MESATestHub what this computer should do next (POST /api/v1/dispatch).
   # +scope+ is 'build' (which commit to build) or 'test' (which test to run;
   # pass the +sha+ you built). +capabilities+ defaults to the configured
@@ -703,9 +724,14 @@ can be revoked on its own, so it is the safer thing to store.'
   #
   # Claims are advisory: a failure is reported and swallowed (returns nil) so
   # it never stops a test run.
+  #
+  # The claim also says what the run is running on (see #claim_environment),
+  # which MESATestHub shows on the pending test. Pass +mesa+ for test claims
+  # so the build's own compiler record is used.
   def claim(sha:, scope:, mod: nil, test_case: nil, all_test_cases: false,
-            flags: {}, dispatched_at: nil)
+            flags: {}, dispatched_at: nil, mesa: nil)
     body = { commit_sha: sha, scope: scope }
+    body.merge!(claim_environment(scope.to_s == 'test' ? mesa : nil))
     body[:test_case_module] = mod.to_s if mod
     body[:test_case_name] = test_case if test_case
     body[:all_test_cases] = true if all_test_cases

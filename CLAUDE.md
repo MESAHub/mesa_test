@@ -32,6 +32,7 @@ MESATestHub can tell a computer what to work on and track what is in flight. The
   - The client never stores claim ids. The server fulfills claims by matching computer, commit, and test when the submission arrives.
   - `install`, `test`, and `install_and_test` claim by default; turn it off with `--no-claim`.
   - Whole-suite runs claim with `all_test_cases: true`, and only when `--module` is `all`.
+  - Claims carry the run's environment (`MesaTestSubmitter#claim_environment`), which the hub shows on pending tests. Test claims use the build's `testhub.yml` compiler record. Build claims are made before compiling, so they send only the shell's `MESASDK_VERSION`. Both send `OMP_NUM_THREADS` and the config's `platform_version`.
 - **Run modes are recorded in the work dir.**
   - `install` appends a `mesa_test_run_modes:` block (`fpe`, `skip_optional`, `resolution_factor`) to `$MESA_DIR/testhub.yml`, after the compiler keys MESA's install writes. See `Mesa#record_run_modes` / `#recorded_run_modes`.
   - It's the single source of truth for later `test` and `submit` runs on that build, e.g. cluster array jobs running `mesa_test test N` with no flags. `submit` sends them as the `claim:` block's `use_*` flags.

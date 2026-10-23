@@ -412,9 +412,25 @@ can be revoked on its own, so it is the safer thing to store.'
     response = testhub_request(https, request)
     # if the hub was unreachable, behave as an unverified computer; the
     # network error has already been reported by testhub_request
-    return {} if response.nil?
+    if response.nil?
+      return { 'valid' => false,
+               'message' => 'Could not verify this computer with MESATestHub.' }
+    end
+
+    # Anything but a 200 (a 429 from the rate limiter, a 5xx, a proxy's HTML
+    # error page) carries no valid/message keys, so name the status and the
+    # server's error instead of failing with a blank line.
+    unless response.is_a?(Net::HTTPOK)
+      return { 'valid' => false,
+               'message' => 'Could not verify this computer with MESATestHub ' \
+                            "(HTTP #{response.code}: #{error_message(response)})." }
+    end
 
     JSON.parse(response.body).to_hash
+  rescue JSON::ParserError
+    { 'valid' => false,
+      'message' => 'Could not verify this computer: MESATestHub sent an ' \
+                   'unreadable response.' }
   end
 
   # submit entire commit's worth of test cases, OR submit compilation status

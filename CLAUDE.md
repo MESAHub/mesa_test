@@ -4,6 +4,64 @@ A Ruby gem that provides a CLI between MESA (Modules for Experiments in Stellar 
 
 Author: William Wolf (wolfwm@uwec.edu). License MIT. Homepage: https://github.com/MESAHub/mesa_test.
 
+## Keep mesa_test lean
+
+mesa_test runs on a heterogeneous fleet of machines that update rarely, so
+every behavior baked in here is a behavior that can go stale. The lesson
+learned over many years: keep this client thin, like a thin controller in
+MVC.
+
+- **MESA owns how tests run and what they record.** That means `./install`,
+  `./each_test_run`, and the per-test `testhub.yml`. mesa_test sets
+  environment variables, runs MESA's scripts, and forwards the YAML MESA
+  writes. It doesn't parse MESA's output or second-guess results. When a
+  new kind of information is needed, have MESA write it into
+  `testhub.yml`.
+- **MESATestHub owns policy:** what to test next, what counts as a request
+  met, pending vs. untested, checksum grouping. Tuning any of it must never
+  need a client update.
+- **New capabilities are opt-in, and the plain path keeps working.**
+  `install SHA`, `test`, `submit`, and `install_and_test SHA` with no new
+  flags must behave as they always have, for users who never upgrade their
+  habits. A new flag may add a MESA dependency. The default path should
+  not.
+- **Before adding anything:** could MESA or the hub do this instead? If not,
+  record the new MESA assumption in the list below.
+
+## What mesa_test assumes about MESA
+
+When MESA changes how tests are run or recorded, check this list to see
+whether a mesa_test update is needed. Long-standing, used by every run:
+
+- `./clean` and `./install` at the top of `$MESA_DIR`. A successful build
+  leaves `build.log` containing "MESA installation was successful", and the
+  install writes `$MESA_DIR/testhub.yml` with `compiler`,
+  `compiler_version`, `sdk_version`, `math_backend`. Only those four keys
+  are read (`Mesa#compiler_hash`).
+- `<module>/test_suite/` for `star`, `binary`, `astero`, each with:
+  - `./list_tests`, printing `<number> <name>` lines;
+  - `./each_test_run`, which with no argument runs every test and with
+    `<number>` runs one;
+  - one directory per test.
+- Each test writes `testhub.yml` in its directory. That file is submitted
+  as-is, apart from the keys mesa_test adds to the payload.
+- `MESA_DIR` selects the installation.
+
+Opt-in features add these (leave them out and they don't apply):
+
+| Feature | Assumes |
+|---|---|
+| `--skip-optional`, `--fpe`, `--converge` / `--resolution-factor`, `best` mode | MESA reads `MESA_SKIP_OPTIONAL`, `MESA_FPE_CHECKS_ON` (at compile time as well as run time), and `MESA_TEST_SUITE_RESOLUTION_FACTOR`, and records the result in each test's `testhub.yml` as `run_optional` / `fpe_checks` / `resolution_factor` |
+| `--build-threads` | `./install` sizes `make -j` from `NPROCS` (all cores if unset) |
+| `--test-threads`, `--jobs` | tests take their thread count from `OMP_NUM_THREADS` |
+| `--jobs` | concurrent `./each_test_run <number>` calls in one `test_suite` directory don't interfere (each test works only in its own directory). True today and long relied on by GNU-parallel scripts, but a convention, not a promise MESA makes. |
+| recorded run modes (`install` with mode flags, or `install best`) | `$MESA_DIR/testhub.yml` stays a YAML mapping that mesa_test can append a `mesa_test_run_modes:` block to |
+
+Possible ways to get thinner later: keep recorded run modes in a file
+mesa_test owns instead of appending to MESA's `testhub.yml`, and move
+parallelism into MESA itself (e.g. `./each_test_run --jobs N`), with
+`--jobs` just passing it through.
+
 ## Layout
 
 This is an intentionally minimal gem — no Bundler scaffolding, no Rakefile, no `spec/`, no `test/`. The whole gem is two files:

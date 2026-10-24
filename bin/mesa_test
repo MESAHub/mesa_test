@@ -51,6 +51,10 @@ class MesaTest < Thor
     option :converge, desc: 'Convergence run (sets MESA_TEST_SUITE_RESOLUTION_FACTOR, ' \
                             "keeping your value if set, else #{DEFAULT_CONVERGE_FACTOR}).",
                       type: :boolean
+    option :resolution_factor, desc: 'Convergence run at this factor (implies --converge). ' \
+                                     'With `best`, a factor the commit names ' \
+                                     '([ci converge 0.5]) wins.',
+                               type: :numeric
   end
 
   desc 'test [TEST CASE]', 'run and submit a test case or commit'
@@ -273,7 +277,7 @@ class MesaTest < Thor
       rec = dispatch_build_or_exit(s)
       sha = rec['commit_sha']
     end
-    modes = rec ? dispatch_run_modes(rec) : explicit_run_modes
+    modes = rec ? modes_for(rec) : explicit_run_modes
     m = if options[:checkout] || rec
           Mesa.checkout(
             sha: sha,
@@ -490,7 +494,7 @@ class MesaTest < Thor
     end
     s = create_and_check_submitter(force: options[:force])
     rec = dispatch_build_or_exit(s)
-    modes = dispatch_run_modes(rec)
+    modes = modes_for(rec)
     m = Mesa.checkout(sha: rec['commit_sha'],
                       work_dir: work_dir(options[:mesadir], s.mesa_work),
                       mirror_dir: s.mesa_mirror,
@@ -540,7 +544,7 @@ class MesaTest < Thor
 
         # FPE is the build's; the run-time modes are this dispatch's (at most
         # one, so a run answers one request cleanly).
-        modes = m.recorded_run_modes.slice(:fpe).merge(dispatch_run_modes(rec).except(:fpe))
+        modes = m.recorded_run_modes.slice(:fpe).merge(modes_for(rec).except(:fpe))
         t = begin
           m.find_test_case(test_case_name: rec['test_case_name'],
                            mod: rec['test_case_module'].to_sym)
@@ -593,7 +597,30 @@ class MesaTest < Thor
     modes[:skip_optional] = options[:skip_optional] unless options[:skip_optional].nil?
     modes[:fpe] = options[:fpe] unless options[:fpe].nil?
     modes[:resolution_factor] = (options[:converge] ? converge_factor : false) unless options[:converge].nil?
+    modes[:resolution_factor] = explicit_factor if explicit_factor
     modes
+  end
+
+  # --resolution-factor, as a string for the environment; implies
+  # --converge, so it can't be combined with --no-converge.
+  def explicit_factor
+    factor = options[:resolution_factor]
+    return nil if factor.nil?
+    raise Thor::Error, '--resolution-factor must be positive.' unless factor.positive?
+    raise Thor::Error, '--resolution-factor implies --converge; drop --no-converge.' if options[:converge] == false
+
+    factor.to_s
+  end
+
+  # The run modes a dispatch asks for, with any --resolution-factor given
+  # here as the preferred converge factor (a factor the commit names
+  # still wins, with a warning).
+  def modes_for(rec)
+    if explicit_factor
+      dispatch_run_modes(rec, preferred: explicit_factor, preferred_source: '--resolution-factor')
+    else
+      dispatch_run_modes(rec)
+    end
   end
 
   # Modes for running tests on +m+'s build: what was recorded at install,
@@ -605,6 +632,14 @@ class MesaTest < Thor
       shell.say "Ignoring --#{explicit[:fpe] ? '' : 'no-'}fpe: this build was compiled " \
                 "#{recorded[:fpe] ? 'with' : 'without'} FPE checks.", :yellow
       explicit.delete(:fpe)
+    end
+    # A factor the build recorded (e.g. from `[ci converge 0.5]` via
+    # `install best`) beats the shell's; say so when they differ.
+    shell_factor = ENV['MESA_TEST_SUITE_RESOLUTION_FACTOR']
+    if recorded[:resolution_factor] && !explicit.key?(:resolution_factor) && shell_factor &&
+       shell_factor.to_f != recorded[:resolution_factor].to_f
+      warn "This build was set up for resolution factor #{recorded[:resolution_factor]}; " \
+           "using it instead of your MESA_TEST_SUITE_RESOLUTION_FACTOR=#{shell_factor}."
     end
     recorded.merge(explicit)
   end
@@ -635,6 +670,7 @@ class MesaTest < Thor
     caps[:fpe] = options[:fpe] unless options[:fpe].nil?
     caps[:full_inlists] = !options[:skip_optional] unless options[:skip_optional].nil?
     caps[:converge] = options[:converge] unless options[:converge].nil?
+    caps[:converge] = true if options[:resolution_factor]
     caps
   end
 

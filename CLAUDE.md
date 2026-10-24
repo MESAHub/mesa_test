@@ -53,6 +53,11 @@ MESATestHub can tell a computer what to work on and track what is in flight. The
   - `full_inlists` unsets `MESA_SKIP_OPTIONAL`.
   - `converge` sets `MESA_TEST_SUITE_RESOLUTION_FACTOR` (the user's value if set, else 0.8).
   - `fpe` sets `MESA_FPE_CHECKS_ON=1`. It is **compile-time** (MESA's make reads it), so it is applied to the install and every test of that build. In test-scope dispatch, `can_fpe` means "this build has FPE checks".
+- **Converge factor:**
+  - `--resolution-factor X` implies `--converge` (and is refused with `--no-converge`).
+  - Precedence for manual runs: `--resolution-factor`, then the shell's `MESA_TEST_SUITE_RESOLUTION_FACTOR`, then 0.8.
+  - A commit can name its factor (`[ci converge 0.5]`), which the hub sends as the dispatch's `converge_factor`. In `best` mode that factor wins over both the flag and the shell, with a warning when they differ (`dispatch_run_modes`).
+  - The factor is recorded at install like any mode, so array jobs use it too, and `test` warns if the shell's value differs.
 - **Capabilities:** the optional modes a computer can run live in config under `capabilities: [full_inlists, fpe, converge]`, set in the setup wizard. Override per run with the mode flags.
 
 ## Submission targets

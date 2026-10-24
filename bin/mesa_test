@@ -38,6 +38,27 @@ class MesaTest < Thor
                    type: :boolean, default: true
   end
 
+  # Parallel testing (opt-in; with neither set, tests run serially in your
+  # shell's environment exactly as before).
+  def self.parallel_options
+    option :jobs, desc: 'Run this many tests at once (each in its own ' \
+                        'process; output in each_test_run.log in the test ' \
+                        'directory). Default 1: one after another.',
+                  type: :numeric, default: 1, aliases: '-j'
+    option :test_threads, desc: 'OMP_NUM_THREADS for each test (default: ' \
+                                "your shell's OMP_NUM_THREADS).",
+                          type: :numeric
+  end
+
+  # NPROCS (MESA's install runs make -j$NPROCS; all cores if unset) and
+  # OMP_NUM_THREADS for the build.
+  def self.build_threads_option
+    option :build_threads, desc: 'Cores for compiling MESA (sets NPROCS and ' \
+                                 'OMP_NUM_THREADS for the install; default: ' \
+                                 'all cores).',
+                           type: :numeric
+  end
+
   # The run-mode switches. Each is three-way: --x, --no-x, or unset. What
   # unset means depends on the command (see each command's help).
   def self.run_mode_options
@@ -89,6 +110,7 @@ class MesaTest < Thor
                    type: :string
   claim_option
   run_mode_options
+  parallel_options
 
   def test(test_case_name = nil)
     s = if options[:submit]
@@ -103,7 +125,7 @@ class MesaTest < Thor
       github_protocol: s.github_protocol
     )
     modes = test_run_modes(m)
-    with_env(run_mode_env(modes)) do
+    with_env(run_mode_env(modes).merge(test_thread_env)) do
       m.with_mesa_dir do
         if test_case_name
           # only testing one test case
@@ -128,7 +150,7 @@ class MesaTest < Thor
           claim_all_tests(s, m, flags: claim_flags(modes)) if options[:submit] && options[:claim]
 
           # run all tests
-          m.each_test_run(mod: options[:module].downcase.to_sym)
+          run_suite(m, mod: options[:module].downcase.to_sym)
   
           # bail out if not submitting
           return unless options[:submit]
@@ -267,6 +289,7 @@ class MesaTest < Thor
                    type: :string
   claim_option
   run_mode_options
+  build_threads_option
 
   def install(sha = 'main')
     # assuming config wizard has already been set (perhaps a little reckless)
@@ -352,6 +375,8 @@ class MesaTest < Thor
                    'submission of complete results.', default: false
   claim_option
   run_mode_options
+  build_threads_option
+  parallel_options
 
   def install_and_test(sha='main')
     return install_and_test_best if sha == 'best'
@@ -395,8 +420,8 @@ class MesaTest < Thor
 
       # run all tests. Don't be fooled, whether or not a diff happens is set
       # by the diff attribute of the mesa object, set above.
-      with_env(run_mode_env(m.recorded_run_modes)) do
-        m.with_mesa_dir { m.each_test_run(mod: options[:module].downcase.to_sym) }
+      with_env(run_mode_env(m.recorded_run_modes).merge(test_thread_env)) do
+        m.with_mesa_dir { run_suite(m, mod: options[:module].downcase.to_sym) }
       end
     ensure
       # submit all commit and test data
@@ -517,7 +542,11 @@ class MesaTest < Thor
     s.submit_commit(m, empty: true)
     # For test dispatch, can_fpe means "this build has FPE checks".
     caps = capabilities_for(s).merge(fpe: m.recorded_run_modes[:fpe] == true)
-    all_submitted = run_dispatched_tests(s, m, caps)
+    all_submitted = if jobs > 1
+                      run_dispatched_tests_parallel(s, m, caps)
+                    else
+                      run_dispatched_tests(s, m, caps)
+                    end
     m.remove if all_submitted && options[:destroy]
   end
 
@@ -564,6 +593,144 @@ class MesaTest < Thor
     all_submitted
   end
 
+  def jobs
+    j = options[:jobs].to_i
+    raise Thor::Error, '--jobs must be at least 1.' if j < 1
+
+    j
+  end
+
+  def test_thread_env
+    n = options[:test_threads]
+    return {} if n.nil?
+    raise Thor::Error, '--test-threads must be at least 1.' if n.to_i < 1
+
+    { 'OMP_NUM_THREADS' => n.to_i.to_s }
+  end
+
+  def build_thread_env
+    n = options[:build_threads]
+    return {} if n.nil?
+    raise Thor::Error, '--build-threads must be at least 1.' if n.to_i < 1
+
+    { 'NPROCS' => n.to_i.to_s, 'OMP_NUM_THREADS' => n.to_i.to_s }
+  end
+
+  # Run every test in +mod+ (or all modules) on +m+'s build, in the current
+  # environment and MESA_DIR: serially through each_test_run (exactly as
+  # before) unless --jobs asks for more, then +jobs+ at a time.
+  def run_suite(m, mod:)
+    return m.each_test_run(mod: mod) if jobs == 1
+
+    m.check_installation
+    mods = mod == :all ? MesaTestCase.modules : [mod]
+    tests = mods.flat_map do |md|
+      (m.test_case_names[md] || []).filter_map { |name| (m.test_cases[md] || {})[name] }
+    end
+    shell.say "Running #{tests.size} tests, #{jobs} at a time " \
+              "(OMP_NUM_THREADS=#{ENV['OMP_NUM_THREADS'] || 'unset'} each).", :blue
+    done = 0
+    lock = Mutex.new
+    parallel_each(tests, jobs) do |t|
+      started = Time.now
+      t.run_isolated
+      lock.synchronize do
+        done += 1
+        report_test(t, started, "[#{done}/#{tests.size}]")
+      end
+    end
+  end
+
+  # One progress line for a finished test, from its testhub.yml.
+  def report_test(t, started, prefix)
+    outcome = begin
+      t.ran? ? (t.passed? ? 'pass' : 'FAIL') : 'no result'
+    rescue StandardError
+      'no result'
+    end
+    shell.say format('%s %s/%s: %s (%.1f min)', prefix, t.mod, t.test_name, outcome,
+                     (Time.now - started) / 60.0), outcome == 'pass' ? :green : :red
+  end
+
+  # `install_and_test best --jobs N`: N workers, each asking for, claiming,
+  # running, and submitting one test at a time. Asking and claiming happen
+  # under a lock, so the hub never hands two workers the same test (it
+  # won't recommend a test this computer holds a claim on). A worker that
+  # hears "nothing more" waits while others are still running -- their
+  # results can open up more work (e.g. a convergence rerun) -- and stops
+  # once everyone is idle.
+  def run_dispatched_tests_parallel(s, m, caps)
+    seen = {}
+    lock = Mutex.new
+    busy = 0
+    stop = false
+    all_submitted = true
+    count = 0
+    m.with_mesa_dir do
+      run_workers(jobs) do
+        job = lock.synchronize do
+          next :done if stop
+
+          rec = dispatch_or_exit(s, scope: 'test', sha: m.sha, capabilities: caps)
+          next(busy.zero? ? :done : :wait) unless rec
+
+          label = "#{rec['test_case_module']}/#{rec['test_case_name']}"
+          key = [label, rec['flags']]
+          if seen[key]
+            shell.say "MesaTestHub asked for #{label} again; stopping.", :red
+            stop = true
+            all_submitted = false
+            next :done
+          end
+          seen[key] = true
+          modes = m.recorded_run_modes.slice(:fpe).merge(modes_for(rec).except(:fpe))
+          t = begin
+            m.find_test_case(test_case_name: rec['test_case_name'],
+                             mod: rec['test_case_module'].to_sym)
+          rescue TestCaseDirError => e
+            shell.say "#{e.message} Stopping.", :red
+            stop = true
+            all_submitted = false
+            next :done
+          end
+          if options[:claim]
+            s.claim(sha: m.sha, scope: 'test', mod: t.mod, test_case: t.test_name,
+                    flags: claim_flags(modes), dispatched_at: rec['dispatched_at'], mesa: m)
+          end
+          busy += 1
+          shell.say "Testing #{label}", :yellow
+          [t, modes]
+        end
+        next :done if job == :done
+        if job == :wait
+          sleep 5
+          next nil
+        end
+
+        t, modes = job
+        started = Time.now
+        finished = false
+        begin
+          t.run_isolated(env: run_mode_env(modes).merge(test_thread_env))
+          finished = true
+        ensure
+          # Only a test that ran to the end is reported and submitted; an
+          # interrupted one just frees its slot.
+          lock.synchronize do
+            busy -= 1
+            if finished
+              count += 1
+              report_test(t, started, "[#{count}]")
+              all_submitted &&= s.submit_instance(m, t, force_logs: options['force-logs'])
+            end
+          end
+        end
+        nil
+      end
+    end
+    all_submitted
+  end
+
   # Claim every test on +m+'s commit in one request — only for whole-suite
   # runs, since claims for tests that never run would sit until they
   # expire.
@@ -576,7 +743,7 @@ class MesaTest < Thor
   # clean + install +m+ with +modes+ in the environment, then record the
   # modes in $MESA_DIR/testhub.yml for later `test`/`submit` runs.
   def build_with_modes(m, modes, raise_on_failure: false)
-    with_env(run_mode_env(modes)) do
+    with_env(run_mode_env(modes).merge(build_thread_env)) do
       m.clean
       m.install
     end
@@ -798,4 +965,10 @@ class MesaTest < Thor
 end
 
 # actually start the CLI
-MesaTest.start(ARGV)
+begin
+  MesaTest.start(ARGV)
+rescue Interrupt
+  # run_workers has already stopped any tests running in parallel.
+  $stderr.puts "\nInterrupted."
+  exit 130
+end

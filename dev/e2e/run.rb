@@ -86,6 +86,29 @@ class Scenario
     File.exist?(path) ? File.readlines(path, chomp: true) : []
   end
 
+  # From the fake MESA's timing log: the build's thread settings, and one
+  # { test:, start:, finish:, omp: } per test run.
+  def timing
+    path = File.join(@dir, 'timing_log.txt')
+    lines = File.exist?(path) ? File.readlines(path, chomp: true) : []
+    build = lines.grep(/\Abuild /).first
+    runs = lines.grep_v(/\Abuild /).map do |l|
+      start, finish, test, omp = l.split
+      { test: test, start: start.to_f, finish: finish.to_f, omp: omp.delete_prefix('omp=') }
+    end
+    [build, runs]
+  end
+
+  # Largest number of runs in progress at once.
+  def self.max_overlap(runs)
+    events = runs.flat_map { |r| [[r[:start], 1], [r[:finish], -1]] }.sort_by { |t, d| [t, d] }
+    events.reduce([0, 0]) { |(cur, best), (_, d)| [cur + d, [best, cur + d].max] }.last
+  end
+
+  def work_dir
+    File.join(@dir, 'work')
+  end
+
   def run_modes_in_testhub_yml
     YAML.safe_load(File.read(File.join(@dir, 'work', 'testhub.yml')))['mesa_test_run_modes']
   end
@@ -322,6 +345,49 @@ SCENARIOS = {
       s.check(r['converge_factor'] == 0.5, "commit's factor: #{r['converge_factor'].inspect}")
       s.check(r['runs'].all? { |run| run['resolution_factor'] == 0.5 }, "runs: #{r['runs']}")
       s.check(r['satisfied']['converge'], "converge request not met: #{r['satisfied']}")
+    end
+  end,
+
+  # --jobs / --test-threads / --build-threads on a whole-suite run: the
+  # build gets NPROCS + OMP_NUM_THREADS, tests run concurrently with their
+  # own thread count and log, and one `entire` submission closes it all.
+  'parallel' => lambda do
+    Scenario.new('install_and_test SHA --jobs 3 (whole suite, parallel)', wants: [], auth: :key).run do |s|
+      status, out = s.mesa_test('install_and_test', s.sha, '--jobs', '3', '--test-threads', '2',
+                                '--build-threads', '4', env: { 'OMP_NUM_THREADS' => '8' })
+      s.check(status.zero?, "install_and_test --jobs 3 exited #{status}")
+      build, runs = s.timing
+      s.check(build == 'build nprocs=4 omp=4', "build threads: #{build.inspect}")
+      s.check(runs.size == TESTS.size && runs.all? { |r| r[:omp] == '2' }, "runs: #{runs}")
+      s.check(Scenario.max_overlap(runs) >= 2, "tests didn't overlap: #{runs}")
+      s.check(out.scan(/\[\d+\/#{TESTS.size}\] \S+: pass/).size == TESTS.size, 'missing per-test progress lines')
+      logs = Dir[File.join(s.work_dir, '*', 'test_suite', '*', 'each_test_run.log')]
+      s.check(logs.size == TESTS.size, "per-test logs: #{logs.size}")
+      r = s.report
+      s.check(r['submissions'].map { |sub| sub['entire'] } == [true], "submissions: #{r['submissions']}")
+      s.check(r['claims'].all? { |c| c['status'] == 'fulfilled' }, "claims: #{r['claims']}")
+    end
+  end,
+
+  # `install_and_test best --jobs 2`: workers share the dispatch loop
+  # without ever running one test twice at once, and finish the same work
+  # the serial loop does.
+  'parallel-best' => lambda do
+    Scenario.new('install_and_test best --jobs 2', wants: %w[optional converge], auth: :key,
+                                                   capabilities: %w[full_inlists converge]).run do |s|
+      status, = s.mesa_test('install_and_test', 'best', '--jobs', '2', env: { 'MESA_SKIP_OPTIONAL' => 't' })
+      s.check(status.zero?, "install_and_test best --jobs 2 exited #{status}")
+      _, runs = s.timing
+      s.check(runs.size == 2 * TESTS.size, "expected #{2 * TESTS.size} runs, got #{runs.size}")
+      s.check(Scenario.max_overlap(runs) == 2, "max concurrent runs: #{Scenario.max_overlap(runs)}")
+      same_test_overlap = runs.group_by { |r| r[:test] }.values.any? { |rs| Scenario.max_overlap(rs) > 1 }
+      s.check(!same_test_overlap, 'one test ran twice at the same time')
+      s.check(tests_logged(s).none? { |l| l.include?('skip_optional=unset') && !l.include?('res=unset') },
+              'a run combined full inlists and converge')
+      r = s.report
+      s.check(r['claims'].all? { |c| c['status'] == 'fulfilled' }, "claims: #{r['claims']}")
+      s.check(r['runs'].size == 2 * TESTS.size, "hub saw #{r['runs'].size} runs")
+      s.check(r['satisfied']['optional'] && r['satisfied']['converge'], "requests: #{r['satisfied']}")
     end
   end,
 

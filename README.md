@@ -42,6 +42,22 @@ On a cluster, where the build and the tests are separate jobs:
 convergence) in the work directory's `testhub.yml`, so the `test` jobs pick
 them up without extra flags.
 
+## Running tests in parallel
+
+By default tests run one after another, using your shell's
+`OMP_NUM_THREADS`. To run several at once:
+
+    mesa_test install_and_test main --build-threads 12 --jobs 4 --test-threads 3
+
+- `--build-threads N`: cores for compiling MESA (default: all of them).
+- `--jobs N`: how many tests run at the same time.
+- `--test-threads N`: `OMP_NUM_THREADS` for each test.
+
+`mesa_test test` (with no test name) takes `--jobs` and `--test-threads`
+too, and `install_and_test best` hands each of its `--jobs` workers its own
+test. Each test's output goes to `each_test_run.log` in its directory, and
+mesa_test prints a line as each finishes. Ctrl-C stops all running tests.
+
 ## Run modes
 
 `--skip-optional` / `--no-skip-optional`, `--fpe` / `--no-fpe`, and

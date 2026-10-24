@@ -58,6 +58,13 @@ MESATestHub can tell a computer what to work on and track what is in flight. The
   - Precedence for manual runs: `--resolution-factor`, then the shell's `MESA_TEST_SUITE_RESOLUTION_FACTOR`, then 0.8.
   - A commit can name its factor (`[ci converge 0.5]`), which the hub sends as the dispatch's `converge_factor`. In `best` mode that factor wins over both the flag and the shell, with a warning when they differ (`dispatch_run_modes`).
   - The factor is recorded at install like any mode, so array jobs use it too, and `test` warns if the shell's value differs.
+- **Parallel testing (opt-in):** `--jobs N` on `test` (all-tests mode) and `install_and_test`; `--test-threads N` sets each test's `OMP_NUM_THREADS`; `--build-threads N` sets `NPROCS` (MESA's `./install` runs `make -j$NPROCS`, all cores if unset) plus `OMP_NUM_THREADS` for the build.
+  - With none set, behavior is exactly as before: serial `./each_test_run` per module, in the shell's environment.
+  - Parallel tests run via `MesaTestCase#run_isolated`: one `./each_test_run <n>` subprocess each, with its own `chdir:` and env, output in `each_test_run.log` in the test dir. `#do_one` / `visit_dir` change the process-wide cwd and ENV, so they're unsafe across threads.
+  - The worker pool is `run_workers` / `parallel_each` in lib.
+  - Whole-suite runs still end with one `entire` submission, so nothing changes on the hub.
+  - `install_and_test best --jobs N` runs N dispatch→claim→run→submit workers, with dispatch+claim under one lock. The hub won't hand out a test this computer holds a claim on, so no test runs twice at once. A worker that gets 204 waits while others are busy (their results can open more work) and stops once all are idle.
+  - Ctrl-C kills the worker threads first (so nothing half-run is submitted), then each test's process group; exit 130.
 - **Capabilities:** the optional modes a computer can run live in config under `capabilities: [full_inlists, fpe, converge]`, set in the setup wizard. Override per run with the mode flags.
 
 ## Submission targets

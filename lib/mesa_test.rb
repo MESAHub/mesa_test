@@ -1297,6 +1297,23 @@ class MesaTestCase
     File.join(test_case_dir, 'testhub.yml')
   end
 
+  # Run this test like #do_one, but as its own subprocess with its own
+  # working directory and environment (+env+ overrides; nil unsets), so
+  # several can run at once -- #do_one changes the process-wide directory
+  # and expects the environment to be set globally. Output goes to
+  # each_test_run.log in the test's directory. Returns true if
+  # each_test_run exited cleanly (the test's pass/fail is in testhub.yml).
+  def run_isolated(env: {})
+    log = File.join(test_case_dir, 'each_test_run.log')
+    pid = Process.spawn(env, './each_test_run', position.to_s,
+                        chdir: test_suite_dir, out: log, err: %i[child out], pgroup: true)
+    RUNNING_TESTS_LOCK.synchronize { RUNNING_TESTS[pid] = test_name }
+    _, status = Process.wait2(pid)
+    status.success?
+  ensure
+    RUNNING_TESTS_LOCK.synchronize { RUNNING_TESTS.delete(pid) } if pid
+  end
+
   # just punt to +each_test_run+ in the test_suite directory. It's your problem
   # now, sucker!
   def do_one
@@ -1514,6 +1531,54 @@ def dispatch_run_modes(rec, preferred: nil, preferred_source: nil)
     end
   end
   modes
+end
+
+# Process groups of tests started by MesaTestCase#run_isolated, so an
+# interrupted parallel run can stop them all.
+RUNNING_TESTS = {}
+RUNNING_TESTS_LOCK = Mutex.new
+
+def stop_running_tests
+  pids = RUNNING_TESTS_LOCK.synchronize { RUNNING_TESTS.keys }
+  pids.each do |pid|
+    Process.kill('TERM', -pid)
+  rescue Errno::ESRCH, Errno::EPERM
+    nil
+  end
+end
+
+# Run +jobs+ worker threads, each calling the block with its index until
+# the block returns :done. On Ctrl-C, kills the workers first (so none
+# goes on to submit a half-run test), then every running test, then
+# re-raises. Exceptions in a worker propagate when it's joined.
+def run_workers(jobs)
+  workers = []
+  jobs.times do |i|
+    workers << Thread.new do
+      Thread.current.report_on_exception = false
+      loop { break if yield(i) == :done }
+    end
+  end
+  workers.each(&:join)
+rescue Interrupt
+  workers.each(&:kill)
+  stop_running_tests
+  raise
+end
+
+# Hand each of +items+ to the block, +jobs+ at a time.
+def parallel_each(items, jobs)
+  queue = Queue.new
+  items.each { |item| queue << item }
+  run_workers([jobs, items.size].min) do
+    item = begin
+      queue.pop(true)
+    rescue ThreadError
+      next :done
+    end
+    yield item
+    nil
+  end
 end
 
 # Run the block with +overrides+ applied to ENV (nil deletes a variable),

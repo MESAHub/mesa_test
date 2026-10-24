@@ -47,11 +47,14 @@ them up without extra flags.
 By default tests run one after another, using your shell's
 `OMP_NUM_THREADS`. To run several at once:
 
-    mesa_test install_and_test main --build-threads 12 --jobs 4 --test-threads 3
+    mesa_test install_and_test main --build-threads 12 --jobs 4
 
 - `--build-threads N`: cores for compiling MESA (default: all of them).
 - `--jobs N`: how many tests run at the same time.
-- `--test-threads N`: `OMP_NUM_THREADS` for each test.
+- `--test-threads N`: `OMP_NUM_THREADS` for each test. Leave it off and
+  your `OMP_NUM_THREADS` (or, if unset, all cores) is split evenly across
+  the jobs, so a value you set for serial runs keeps meaning "this many
+  cores in total".
 
 `mesa_test test` (with no test name) takes `--jobs` and `--test-threads`
 too, and `install_and_test best` hands each of its `--jobs` workers its own

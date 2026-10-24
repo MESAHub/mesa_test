@@ -375,9 +375,14 @@ SCENARIOS = {
   'parallel-best' => lambda do
     Scenario.new('install_and_test best --jobs 2', wants: %w[optional converge], auth: :key,
                                                    capabilities: %w[full_inlists converge]).run do |s|
-      status, = s.mesa_test('install_and_test', 'best', '--jobs', '2', env: { 'MESA_SKIP_OPTIONAL' => 't' })
+      status, out = s.mesa_test('install_and_test', 'best', '--jobs', '2',
+                                env: { 'MESA_SKIP_OPTIONAL' => 't', 'OMP_NUM_THREADS' => '8' })
       s.check(status.zero?, "install_and_test best --jobs 2 exited #{status}")
       _, runs = s.timing
+      # No --test-threads: the shell's 8 is split across the 2 jobs.
+      s.check(runs.all? { |r| r[:omp] == '4' }, "per-test threads: #{runs.map { |r| r[:omp] }.uniq}")
+      s.check(out.include?('2 tests at a time, 4 threads each (OMP_NUM_THREADS=8 ÷ 2)'),
+              'no message about the thread split')
       s.check(runs.size == 2 * TESTS.size, "expected #{2 * TESTS.size} runs, got #{runs.size}")
       s.check(Scenario.max_overlap(runs) == 2, "max concurrent runs: #{Scenario.max_overlap(runs)}")
       same_test_overlap = runs.group_by { |r| r[:test] }.values.any? { |rs| Scenario.max_overlap(rs) > 1 }

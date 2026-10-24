@@ -15,6 +15,7 @@ end
 
 require 'thor'
 require 'yaml'
+require 'etc'
 
 class MesaTest < Thor
   DEVELOPMENT_URI = 'http://localhost:3000'.freeze
@@ -45,8 +46,9 @@ class MesaTest < Thor
                         'process; output in each_test_run.log in the test ' \
                         'directory). Default 1: one after another.',
                   type: :numeric, default: 1, aliases: '-j'
-    option :test_threads, desc: 'OMP_NUM_THREADS for each test (default: ' \
-                                "your shell's OMP_NUM_THREADS).",
+    option :test_threads, desc: 'OMP_NUM_THREADS for each test. Default: ' \
+                                "your shell's OMP_NUM_THREADS (else all cores) " \
+                                'split evenly across --jobs.',
                           type: :numeric
   end
 
@@ -600,12 +602,45 @@ class MesaTest < Thor
     j
   end
 
+  # OMP_NUM_THREADS for each test. --test-threads if given. Otherwise, with
+  # --jobs N, the shell's OMP_NUM_THREADS (else the core count) is treated
+  # as the budget for the whole run and split evenly across the N tests,
+  # rounded down, at least 1 -- a value set for serial runs shouldn't
+  # silently become N times as many threads. Serial runs leave the shell
+  # alone. Computed once, before anything changes ENV.
   def test_thread_env
-    n = options[:test_threads]
-    return {} if n.nil?
-    raise Thor::Error, '--test-threads must be at least 1.' if n.to_i < 1
+    @test_thread_env ||= begin
+      n = options[:test_threads]
+      if n
+        raise Thor::Error, '--test-threads must be at least 1.' if n.to_i < 1
 
-    { 'OMP_NUM_THREADS' => n.to_i.to_s }
+        { 'OMP_NUM_THREADS' => n.to_i.to_s }
+      elsif jobs > 1
+        { 'OMP_NUM_THREADS' => split_threads.to_s }
+      else
+        {}
+      end
+    end
+  end
+
+  def split_threads
+    from_shell = ENV['OMP_NUM_THREADS'].to_i
+    budget, source = if from_shell.positive?
+                       [from_shell, "OMP_NUM_THREADS=#{from_shell}"]
+                     else
+                       [Etc.nprocessors, "#{Etc.nprocessors} cores"]
+                     end
+    each = [budget / jobs, 1].max
+    if budget < jobs
+      shell.say "--jobs #{jobs} is more than your #{source}; each test gets 1 thread " \
+                "(#{jobs} in all).", :yellow
+    else
+      idle = budget - each * jobs
+      note = idle.positive? ? "; #{idle} left idle" : ''
+      shell.say "Up to #{jobs} tests at a time, #{each} thread#{'s' unless each == 1} each " \
+                "(#{source} ÷ #{jobs}#{note}). Use --test-threads to set it yourself.", :blue
+    end
+    each
   end
 
   def build_thread_env
@@ -627,8 +662,7 @@ class MesaTest < Thor
     tests = mods.flat_map do |md|
       (m.test_case_names[md] || []).filter_map { |name| (m.test_cases[md] || {})[name] }
     end
-    shell.say "Running #{tests.size} tests, #{jobs} at a time " \
-              "(OMP_NUM_THREADS=#{ENV['OMP_NUM_THREADS'] || 'unset'} each).", :blue
+    shell.say "Running #{tests.size} tests, #{jobs} at a time.", :blue
     done = 0
     lock = Mutex.new
     parallel_each(tests, jobs) do |t|

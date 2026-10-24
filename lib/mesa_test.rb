@@ -1487,12 +1487,32 @@ end
 # Run modes a MESATestHub dispatch asked for. Requests only ever *add* to the
 # user's setup: a mode the hub didn't ask for is left out (so the shell
 # decides), never forced off.
-def dispatch_run_modes(rec)
+#
+# A converge request may name its factor (`[ci converge 0.5]` arrives as
+# rec['converge_factor']). That's the commit author's request, so it wins
+# over +preferred+ -- a factor from --resolution-factor or the shell's
+# MESA_TEST_SUITE_RESOLUTION_FACTOR -- with a warning when they differ.
+# Without a named factor, +preferred+ (else the default) is used.
+def dispatch_run_modes(rec, preferred: nil, preferred_source: nil)
   flags = rec['flags'] || {}
   modes = {}
   modes[:fpe] = true if flags['use_fpe']
   modes[:skip_optional] = false if flags['use_full_inlists']
-  modes[:resolution_factor] = converge_factor if flags['use_converge']
+  if flags['use_converge']
+    requested = rec['converge_factor']
+    preferred ||= ENV['MESA_TEST_SUITE_RESOLUTION_FACTOR']
+    preferred_source ||= 'MESA_TEST_SUITE_RESOLUTION_FACTOR'
+    if requested
+      factor = requested.to_s
+      if preferred && preferred.to_f != requested.to_f
+        warn "MESATestHub asked for resolution factor #{factor} ([ci converge #{factor}]); " \
+             "using it instead of your #{preferred_source}=#{preferred}."
+      end
+      modes[:resolution_factor] = factor
+    else
+      modes[:resolution_factor] = preferred || DEFAULT_CONVERGE_FACTOR
+    end
+  end
   modes
 end
 

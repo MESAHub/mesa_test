@@ -296,6 +296,35 @@ SCENARIOS = {
     end
   end,
 
+  # `[ci converge 0.5]` names its factor: it beats the shell's own
+  # MESA_TEST_SUITE_RESOLUTION_FACTOR (with a warning) at install and in
+  # every array job, and only runs at 0.5 satisfy the request.
+  'converge-factor' => lambda do
+    Scenario.new('[ci converge 0.5]: the named factor wins, with a warning',
+                 wants: %w[converge=0.5], auth: :key, capabilities: %w[converge]).run do |s|
+      shell = { 'MESA_SKIP_OPTIONAL' => 't', 'MESA_TEST_SUITE_RESOLUTION_FACTOR' => '0.9' }
+      status, out = s.mesa_test('install', 'best', env: shell)
+      s.check(status.zero?, "install best exited #{status}")
+      s.check(out.include?('asked for resolution factor 0.5') && out.include?('=0.9'),
+              'no warning about overriding the shell factor at install')
+      s.check(s.run_modes_in_testhub_yml == { 'resolution_factor' => '0.5' },
+              "recorded modes were #{s.run_modes_in_testhub_yml.inspect}")
+
+      s.mesa_test('submit', '--empty', env: shell)
+      _, out = s.mesa_test('test', '1', env: shell)
+      s.check(out.include?('set up for resolution factor 0.5'), 'no warning in the array job')
+      s.mesa_test('test', '2', env: shell)
+      s.mesa_test('test', '3', env: shell)
+      s.check(tests_logged(s).size == TESTS.size && tests_logged(s).all? { |l| l.end_with?('res=0.5') },
+              "array jobs didn't run at 0.5: #{tests_logged(s)}")
+
+      r = s.report
+      s.check(r['converge_factor'] == 0.5, "commit's factor: #{r['converge_factor'].inspect}")
+      s.check(r['runs'].all? { |run| run['resolution_factor'] == 0.5 }, "runs: #{r['runs']}")
+      s.check(r['satisfied']['converge'], "converge request not met: #{r['satisfied']}")
+    end
+  end,
+
   # When the hub has nothing for this computer, every dispatching command
   # exits NOTHING_TO_DO_EXIT without touching the work directory or claiming
   # anything -- and an unreachable hub is an ordinary failure, not "nothing

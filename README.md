@@ -54,3 +54,7 @@ them up without extra flags.
 - **Otherwise:** they set the mode directly. Anything you leave unset
   comes from what `install` recorded, then from your shell.
 - **FPE checks** are compiled in, so they are fixed when MESA is installed.
+- **Convergence factor:** `--resolution-factor 0.5` runs at a specific
+  factor (and implies `--converge`). A commit can ask for one with
+  `[ci converge 0.5]`; with `best`, that request wins over your own
+  setting, and mesa_test says so when they differ.

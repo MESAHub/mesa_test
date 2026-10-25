@@ -25,6 +25,9 @@ TESTHUB_DIR = ENV['TESTHUB_DIR'] && File.expand_path(ENV['TESTHUB_DIR'])
 URL = ENV.fetch('MESATESTHUB_URL', 'http://localhost:3000')
 TESTS = %w[star/fake_alpha star/fake_beta binary/fake_gamma].freeze
 NOTHING_TO_DO_EXIT = 3
+# What mesa_test reports as this computer's OS (detected, never configured).
+DETECTED_OS = Open3.capture2('ruby', '-I', File.join(REPO, 'lib'), '-e',
+                             'require "mesa_test"; print MesaTestSubmitter.detect_platform_version').first
 
 class Scenario
   attr_reader :failures
@@ -300,10 +303,10 @@ SCENARIOS = {
       # Claims say what they run on: test claims from the build's own
       # testhub.yml, the build claim from the shell (made before compiling).
       tests_env = r['claims'].select { |c| c['scope'] == 'test' }.map { |c| c['environment'] }.uniq
-      s.check(tests_env == ['SDK aarch64-macos-26.3.2 · gfortran 15.2.0 · CRMATH · 3 threads · linux e2e'],
+      s.check(tests_env == ["SDK aarch64-macos-26.3.2 · gfortran 15.2.0 · CRMATH · 3 threads · linux #{DETECTED_OS}"],
               "test claims' environment: #{tests_env}")
       build_env = r['claims'].find { |c| c['scope'] == 'build' }&.dig('environment')
-      s.check(build_env == 'SDK e2e-sdk · 3 threads · linux e2e', "build claim's environment: #{build_env.inspect}")
+      s.check(build_env == "SDK e2e-sdk · 3 threads · linux #{DETECTED_OS}", "build claim's environment: #{build_env.inspect}")
       # install best reported the build and `submit --empty` reported it
       # again; the hub keeps one (same build.log fingerprint).
       s.check(r['submissions'].count { |sub| sub['empty'] } == 1,
@@ -566,6 +569,11 @@ SCENARIOS = {
       s.check(Scenario.one_build_then_per_test?(r['submissions']), "submissions: #{r['submissions']}")
       s.check(r['claims'].size == 1 + TESTS.size && r['claims'].all? { |c| c['status'] == 'fulfilled' },
               "claims: #{r['claims']}")
+      # The config's stale platform_version ('e2e') is ignored for the
+      # detected one.
+      s.check(!DETECTED_OS.empty? && r['claims'].all? { |c| c['environment'].to_s.include?(DETECTED_OS) },
+              "claims don't carry the detected OS #{DETECTED_OS.inspect}: " \
+              "#{r['claims'].map { |c| c['environment'] }}")
 
       status, out = s.mesa_test('count', 'computer: client-fixture', env: key)
       s.check(status.zero? && JSON.parse(out.lines.last)['count'] == TESTS.size,
@@ -582,7 +590,7 @@ SCENARIOS = {
       # Enter keeps every other answer: the protocol, logs token, and
       # directories come from the old config.
       answers = ['mth_not_a_real_key', s.fixture['api_key'], 'fpe, converge', '', '',
-                 '', '', '', '', 'y'].join("\n") + "\n"
+                 '', '', 'y'].join("\n") + "\n"
       status, out = s.mesa_test('setup', stdin: answers)
       c = s.config
       s.check(status.zero?, "setup exited #{status}:\n#{out}")
@@ -592,8 +600,9 @@ SCENARIOS = {
               c['capabilities'] == %w[fpe converge], "config: #{c}")
       s.check(!c.key?('password') && !c.key?('email'), "old credentials kept: #{c.keys}")
       s.check(c['logs_token'] == 'old-logs-token' && c['github_protocol'] == :ssh &&
-              c['mesa_work'] == s.work_dir && c['platform_version'] == 'e2e',
-              "old settings not kept: #{c}")
+              c['mesa_work'] == s.work_dir, "old settings not kept: #{c}")
+      # The OS version is detected each run, not stored.
+      s.check(!c.key?('platform') && !c.key?('platform_version'), "platform still stored: #{c.keys}")
     end
   end
 }.freeze

@@ -82,14 +82,20 @@ class MesaTest < Thor
 
   desc 'test [TEST CASE]', 'run and submit a test case or commit'
   long_desc <<-LONGDESC
-    If you specify an optional test case, only that test case
-    will be tested. Otherwise all test cases in your work directory (set up in
-    your .mesa_test.yml file). TEST_CASE can also be an integer corresponding
-    to the position it has in do1_test_source (or a concatenated version of
-    that file if no module is specified). Modules are searched/concatenated in
-    this order:
+    Runs TEST_CASE, or with no TEST_CASE every test case, in the MESA
+    installation in your work directory (mesa_work in ~/.mesa_test/config.yml,
+    or --mesadir). TEST_CASE can be a name or an integer: its position in
+    do1_test_source (or in the modules' lists concatenated, if no --module is
+    given). Modules are searched/concatenated in this order:
 
     #{MesaTestCase.modules.map { |mod| '    ' + mod.to_s }.join(', ')}
+
+    Each test is claimed on MesaTestHub as it starts, so it shows as pending,
+    and its result is submitted as soon as it finishes. This needs an API key
+    (see `mesa_test help setup`). --no-submit runs tests locally only:
+    nothing is claimed or sent, and no key is needed.
+
+    With no TEST_CASE, --jobs N runs N tests at once.
 
     Run modes (--skip-optional, --fpe, --converge): a flag given here wins;
     otherwise the mode recorded when this build was installed (in
@@ -98,9 +104,8 @@ class MesaTest < Thor
     them keeps that setting whatever is passed here.
   LONGDESC
 
-  option :force, desc: 'When submitting, assume submission data in ' \
-                       '~/.mesa_test.yml are correct rather than checking ' \
-                       'with user.',
+  option :force, desc: 'Use ~/.mesa_test/config.yml as it is. --no-force ' \
+                       'shows it and asks you to confirm (or fix) it first.',
                  type: :boolean, default: true, aliases: '-f'
   option 'force-logs', desc: 'Submit logs for test case(s), even if they pass',
                        type: :boolean, default: false
@@ -163,27 +168,28 @@ class MesaTest < Thor
 
   desc 'submit [TEST CASE]', 'submit a test case or commit'
   long_desc <<-LONGDESC
-    All tests are assumed to be in the default mesa directory (set as mesa_work
-    in .mesa_test.yml. If you specify an optional test case, only that test case
-    will be submitted. TEST_CASE can also be an integer corresponding to the
-    position it has in do1_test_source (or a concatenated version of that file
-    if no module is specified). Modules are searched/concatenated in this
-    order:
+    Submits results already in your work directory (mesa_work in
+    ~/.mesa_test/config.yml, or --mesadir) without running anything: say, from
+    a cluster's head node after jobs ran with --no-submit, or to retry after a
+    network failure. With TEST_CASE (a name or number, as for `test`), just
+    that test's result. Without it, the build status plus every test with
+    results from this build (or with --empty, just the build status), in one
+    request. Results left over from an earlier build are skipped, and
+    MesaTestHub ignores results it already has, so submitting again is safe.
+    Needs an API key (see `mesa_test help setup`). Modules are
+    searched/concatenated in this order:
 
     #{MesaTestCase.modules.map { |mod| '    ' + mod.to_s }.join(', ')}
   LONGDESC
 
-  option :force, desc: 'When submitting, assume submission data in ' \
-                       '~/.mesa_test.yml are correct rather than checking ' \
-                       'with user.',
+  option :force, desc: 'Use ~/.mesa_test/config.yml as it is. --no-force ' \
+                       'shows it and asks you to confirm (or fix) it first.',
                  type: :boolean, default: true, aliases: '-f'
   option 'force-logs', desc: 'Submit logs for test case(s), even if they pass',
                        type: :boolean, default: false
   option :module, desc: 'Which module to test and/or submit, if applicable.',
                   type: :string, default: 'all', aliases: '-m'
-  option :empty, desc: 'Whether any test cases will be submitted. Useful for '\
-                       'indicating compilation status independently of ' \
-                       'single test submissions.',
+  option :empty, desc: 'Submit only the build status, no test results.',
                  type: :boolean, default: false, aliases: '-e'
   option :mesadir, desc: 'Location of mesa dir, if not relying on config data',
                    type: :string
@@ -234,12 +240,10 @@ class MesaTest < Thor
 
   desc 'checkout [SHA]', 'checkout a commit'
   long_desc <<-LONGDESC
-  Checks out a particular commit to default mesa directory (mesa_work in 
-  .mesa_test.yml). Uses git worktree magic to avoid re-downloading all of
-  mesa history if a mirror repo is already set up. Does not affect the
-  user's MESA_DIR or other environment variables.
-
-  If no sha is provided, defaults to main (if checkout is occuring).
+  Checks out SHA (default: main) into your work directory (mesa_work in
+  ~/.mesa_test/config.yml, or --mesadir), using git worktrees off the mirror
+  so MESA's history isn't downloaded again. Doesn't build, doesn't contact
+  MesaTestHub, and doesn't touch your own MESA_DIR or environment.
   LONGDESC
 
   option :mesadir, desc: 'Location of mesa dir, if not relying on config data',
@@ -257,20 +261,17 @@ class MesaTest < Thor
 
   desc 'install [SHA]', 'checkout and install a commit'
   long_desc <<-LONGDESC
-  Optionally checks out a particular commit to default mesa directory 
-  (mesa_work in .mesa_test.yml). Then runs installation script in the work
-  directory. Equivalent to an [optional] git checkout followed by going
-  into the directory and running ./clean and ./install, but there is some git
-  worktree magic on the backend to improve efficiency. SDK or compilers must be
-  set up prior. Does not affect the user's MESA_DIR or other environment
-  variables outside of execution.
-
-  If no sha is provided, defaults to main (if checkout is occuring). SHA is
-  ignored if using option --no-checkout
+  Checks out SHA (default: main) into your work directory (mesa_work in
+  ~/.mesa_test/config.yml, or --mesadir) and builds it: ./clean and
+  ./install, with git worktrees off the mirror so MESA's history isn't
+  downloaded again. The SDK or compilers must already be set up. Doesn't
+  touch your own MESA_DIR or environment. With --no-checkout, builds what's
+  already there and ignores SHA.
 
   The build is claimed and its result (pass or fail, with the build log)
-  reported to MesaTestHub, and a failed build exits with status 1.
-  --no-submit just builds, for local work: nothing is claimed or sent.
+  reported to MesaTestHub, which needs an API key (see `mesa_test help
+  setup`). A failed build exits with status 1. --no-submit just builds, for
+  local work: nothing is claimed or sent, and no key is needed.
 
   Run modes given here (--skip-optional, --fpe, --converge) are used for
   the build and recorded in $MESA_DIR/testhub.yml, so later `mesa_test test`
@@ -303,7 +304,11 @@ class MesaTest < Thor
     validate_options!
     # assuming config wizard has already been set (perhaps a little reckless)
     # so that we can get at the work directory and mirror directory
-    s = create_submitter(force: true)
+    s = if options[:submit] || sha == 'best'
+          create_and_check_submitter(force: true)
+        else
+          create_submitter(force: true)
+        end
     rec = nil
     if sha == 'best'
       rec = dispatch_build_or_exit(s)
@@ -343,23 +348,21 @@ class MesaTest < Thor
 
   desc 'install_and_test [SHA]', 'Install, test, and submit an entire commit.'
   long_desc <<-LONGDESC
-  Optionally checks out a particular commit (specified by SHA, which default to
-  HEAD if not provided) to a mesa directory (mesa_work in .mesa_test.yml, 
-  unless a custom location is provided by --workdir=MYDIR). Then go into the
-  directory and run ./clean and ./install. SDK or compilers must be set up
-  prior. Once installation is complete, run the test suite, and report results
-  (commit and all test data) to MesaTestHub in a single request.
-  Does not affect the user's MESA_DIR or other environment variables. This is
-  basically a shortcut for running
+  Checks out SHA (default: main) into your work directory (mesa_work in
+  ~/.mesa_test/config.yml, or --mesadir), builds it (./clean and ./install;
+  the SDK or compilers must already be set up), and runs the test suite.
+  Doesn't touch your own MESA_DIR or environment. Roughly a shortcut for
 
-    `mesa_test install SOME_SHA`
+    mesa_test install SHA && mesa_test test
 
-  followed by
+  The build status is submitted as soon as the build finishes (a failed
+  build is reported and exits 1), then each test is claimed as it starts
+  and submitted as it finishes, so results roll in during the run. This
+  needs an API key (see `mesa_test help setup`). --no-submit builds and
+  tests locally without claiming or sending anything. With --no-checkout,
+  the build in the work directory is used and SHA is ignored.
 
-    `mesa_test test`
-
-  If no sha is provided, defaults to main (if checkout is occuring). SHA is
-  ignored if using option --no-checkout
+  --jobs N runs N tests at once; see also --test-threads and --build-threads.
 
   Run modes (--skip-optional, --fpe, --converge) apply to the build and
   every test; unset ones are left to your shell's environment.
@@ -381,9 +384,8 @@ class MesaTest < Thor
                     type: :boolean, default: true, aliases: '-c'
   option :mesadir, desc: 'Location of mesa dir, if not relying on config data',
                    type: :string
-  option :force, desc: 'When submitting, assume submission data in ' \
-                       '~/.mesa_test.yml are correct rather than checking ' \
-                       'with user.',
+  option :force, desc: 'Use ~/.mesa_test/config.yml as it is. --no-force ' \
+                       'shows it and asks you to confirm (or fix) it first.',
                  type: :boolean, default: true, aliases: '-f'
   option :submit, desc: 'Submit results (if any) to MesaTestHub.',
                   type: :boolean, default: true
@@ -464,7 +466,8 @@ class MesaTest < Thor
   use and the reasons it was picked. The mode flags say what this computer
   is willing to do (overriding `capabilities` in the config file). Prints
   nothing and exits with status #{NOTHING_TO_DO_EXIT} when there is nothing
-  useful to do. Read-only: nothing is claimed.
+  useful to do. Read-only: nothing is claimed. Needs an API key (see
+  `mesa_test help setup`).
   LONGDESC
 
   option :scope, desc: 'build or test', type: :string, default: 'build',
@@ -473,19 +476,30 @@ class MesaTest < Thor
   run_mode_options
 
   def request_work
-    s = create_submitter(force: true)
+    s = create_submitter(force: true, hub: true)
     rec = dispatch_or_exit(s, scope: options[:scope], sha: options[:sha])
     exit NOTHING_TO_DO_EXIT unless rec
 
     puts JSON.pretty_generate(rec)
   end
 
-  desc 'setup [CONFIG_FILE]', 'Setup MesaTestHub config file.'
+  desc 'setup [CONFIG_FILE]', 'Set up this computer (API key, test modes, directories)'
   long_desc <<-LONGDESC
-    If optional CONFIG_FILE is provided, search for that file and load it
-    to provide default values for configuration. If not provided, the default
-    file, ~/.mesa_test.yml, is used. The resulting config file is saved to
-    the same location it was read from.
+    Walks through this computer's settings, offering the current ones as
+    defaults, and saves them to CONFIG_FILE (default ~/.mesa_test/config.yml,
+    which is where the other commands look).
+
+    mesa_test authenticates with a per-computer API key. To get one, log in
+    to MesaTestHub, open My Computers, open this computer's page (adding the
+    computer first if needed; one used only for `search` and `count` is
+    fine), and click "Generate key". The key starts with mth_. Paste it when
+    the wizard asks, or export MESATESTHUB_API_KEY, which overrides the
+    config file (e.g. to keep the key off disk on a cluster).
+
+    The wizard checks the key with MesaTestHub, which also supplies this
+    computer's name. Then it asks which optional test modes the computer is
+    willing to run when a commit asks for them (full_inlists, fpe, converge),
+    the logs token, and where the MESA mirror and work directory live.
   LONGDESC
   def setup(config_file = File.join(ENV['HOME'], '.mesa_test', 'config.yml'))
     MesaTestSubmitter.new_from_config(config_file: config_file,
@@ -495,8 +509,8 @@ class MesaTest < Thor
   desc 'search "QUERY"', 'retrieve JSON test instances matching QUERY'
   long_desc <<-LONGDESC
   Sends a GET request to the MesaTestHub search API. QUERY should be
-  quoted. Credentials are read from your mesa_test config file and sent as
-  URL query parameters (HTTPS is mandatory).
+  quoted. Authenticates with your API key; a key for any of your computers
+  works, since search is read-only.
 
   Query syntax is the same key-value form used by the in-browser search box
   at testhub.mesastar.org/test_instances/search (see the "Query syntax"
@@ -512,7 +526,7 @@ class MesaTest < Thor
   LONGDESC
 
   def search(query)
-    s = create_submitter(force: true)
+    s = create_submitter(force: true, hub: true)
     emit_search_response(s.search(query))
   end
 
@@ -524,7 +538,7 @@ class MesaTest < Thor
   LONGDESC
 
   def count(query)
-    s = create_submitter(force: true)
+    s = create_submitter(force: true, hub: true)
     emit_search_response(s.search_count(query))
   end
 
@@ -982,6 +996,10 @@ class MesaTest < Thor
       $stderr.puts "Search request failed: HTTP #{response.code} "\
                    "#{response.message}"
       $stderr.puts response.body unless response.body.nil? || response.body.empty?
+      if response.code == '401'
+        $stderr.puts "\nCheck your API key (`mesa_test setup`, or MESATESTHUB_API_KEY).\n" \
+                     "#{MesaTestSubmitter::API_KEY_HELP}"
+      end
       exit 1
     end
   end
@@ -1012,11 +1030,16 @@ class MesaTest < Thor
       puts computer_check['message']
     else
       $stderr.puts computer_check['message']
+      unless computer_check['reachable'] == false
+        $stderr.puts 'Check your API key (`mesa_test setup`, or MESATESTHUB_API_KEY).'
+      end
       exit 1
     end
   end
 
-  def create_submitter(force: true)
+  # hub: true for commands that talk to MesaTestHub, which all need an API
+  # key; checked first, before any checkout or build.
+  def create_submitter(force: true, hub: false)
     s = case MODE
         when :development
           MesaTestSubmitter.new_from_config(base_uri: DEVELOPMENT_URI)
@@ -1028,11 +1051,12 @@ class MesaTest < Thor
     unless force
       s.setup unless s.confirm_computer_data
     end
+    s.require_api_key! if hub
     s
   end
 
   def create_and_check_submitter(force: true)
-    s = create_submitter(force: force)
+    s = create_submitter(force: force, hub: true)
     check_user_and_computer s
     s
   end
@@ -1081,4 +1105,7 @@ rescue Interrupt
   # run_workers has already stopped any tests running in parallel.
   $stderr.puts "\nInterrupted."
   exit 130
+rescue TestHubError => e
+  $stderr.puts e.message
+  exit 1
 end

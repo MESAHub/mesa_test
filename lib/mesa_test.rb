@@ -22,46 +22,32 @@ GITHUB_SSH = 'git@github.com:MESAHub/mesa.git'.freeze
 class MesaTestSubmitter
   DEFAULT_URI = 'https://testhub.mesastar.org'.freeze
 
+  # How to get an API key, for the setup wizard and for every command that
+  # finds none.
+  API_KEY_HELP = <<~HELP.freeze
+    mesa_test authenticates with a per-computer API key. To get one:
+      1. Log in to MESATestHub (#{DEFAULT_URI}) and open My Computers.
+      2. Open this computer's page (add the computer first if it isn't
+         listed; a computer used only for `search` and `count` is fine).
+      3. Click "Generate key" and copy the key, which starts with mth_.
+  HELP
+
   # set up config file for computer
   def setup
     update do |s|
-      shell.say 'This wizard will guide you through setting up a computer
-profile and default data for test case submissions to MESATestHub. You
-will be able to confirm entries at the end. Default/current values are always
-shown in parentheses at the end of a prompt. Pressing enter will accept the
-default values.
+      shell.say <<~INTRO
+        This wizard sets up this computer's profile for MESATestHub. Current
+        values are shown in parentheses; press enter to keep them. You can
+        confirm everything at the end.
 
-To submit to MESATestHub, you need a computer name plus either an API key for
-that computer (recommended; generate one from the computer page on
-MESATestHub) or your email address and password. To actually run a test, you
-need to specify a location for your base MESA git repository. All other data
-are useful, but optional. Any data transferred to MESATestHub will be
-encrypted via HTTPS, but be warned that your password and API key will be
-stored in plain text. An API key can only submit for this one computer and
-can be revoked on its own, so it is the safer thing to store.'
-      # Get computer name
-      response = shell.ask('What is the name of this computer (required)? ' \
-        "(#{s.computer_name}):", :blue)
-      s.computer_name = response unless response.empty?
+        #{API_KEY_HELP}
+        (MESATESTHUB_API_KEY, if set, overrides the key saved here.) The key
+        can only act as this one computer, can't log in to the website, and
+        can be revoked on its own, but it is stored in plain text in
+        #{config_file}, as is the logs token.
+      INTRO
 
-      # Get API key for this computer (preferred over email + password)
-      response = shell.ask 'What is the MESATestHub API key for this ' \
-        'computer (recommended; leave blank to use email and password)? ' \
-        "(#{s.masked_api_key || 'none'}):", :blue
-      s.api_key = response.strip unless response.strip.empty?
-
-      # Get user e-mail
-      response = shell.ask 'What is the email you can be reached ' \
-        "at (required)? (#{s.email}):", :blue
-      s.email = response unless response.empty?
-
-      # Get user password (not needed when an API key is set)
-      unless s.api_key
-        response = shell.ask 'What is the password associated with the ' \
-          "email #{s.email} (required without an API key)? (#{s.password})",
-          :blue
-        s.password = response unless response.empty?
-      end
+      ask_for_api_key(s)
 
       # Optional run modes this computer can serve when MESATestHub asks for
       # them (see `mesa_test request_work` and `install_and_test best`)
@@ -73,10 +59,10 @@ can be revoked on its own, so it is the safer thing to store.'
       s.capabilities = parse_capabilities(response) unless response.strip.empty?
 
       # Get API key for submitting failure logs
-      response = shell.ask 'What is the logs submission API token associated '\
-        "with the email #{s.email} (required; if you don't have one, ask a "\
-        "MESA testing maintainer or a representative from Flatiron for a "\
-        "key)? (#{s.logs_token})", :blue
+      response = shell.ask 'What is your token for uploading failure logs to ' \
+        "the logs server? (if you don't have one, ask a MESA testing " \
+        'maintainer or a representative from Flatiron for a key) ' \
+        "(#{s.logs_token}):", :blue
       s.logs_token = response unless response.empty?
 
       # Determine if we'll use ssh or https to access github
@@ -105,13 +91,6 @@ can be revoked on its own, so it is the safer thing to store.'
       response = shell.ask 'What is the version of the platform (eg. 10.15.5, ' \
         "Ubuntu 16.04)? (#{s.platform_version}):", :blue
       s.platform_version = response unless response.empty?
-
-      # we are powerless to do change the location for now, so stop asking
-      # about it
-      # # Confirm save location
-      # response = shell.ask "This will be saved in #{s.config_file}. Press " \
-      #   'enter to accept or enter a new location:', :blue, path: true
-      # s.config_file = response unless response.empty?
     end
 
     # Confirm data. If not confirmed, restart whole wizard.
@@ -120,6 +99,42 @@ can be revoked on its own, so it is the safer thing to store.'
     else
       shell.say "Restarting wizard.\n"
       setup
+    end
+  end
+
+  # Ask for the API key until MESATestHub accepts one, and take the computer
+  # name from it, since a key belongs to exactly one computer. If the hub
+  # can't be reached, keep the key and ask for the name instead.
+  def ask_for_api_key(s)
+    loop do
+      if ENV['MESATESTHUB_API_KEY']
+        shell.say "Using the API key in MESATESTHUB_API_KEY (#{s.masked_api_key}). " \
+                  'Unset it to enter one here.', :yellow
+      else
+        response = shell.ask 'What is the MESATestHub API key for this ' \
+          "computer? (#{s.masked_api_key || 'none'}):", :blue
+        s.api_key = response.strip unless response.strip.empty?
+        next shell.say('An API key is required.', :red) unless s.api_key
+      end
+
+      check = s.confirm_computer(computer_name: nil)
+      if check['valid']
+        s.computer_name = check['computer'] || s.computer_name
+        shell.say "Key accepted: this computer is #{s.computer_name} on MESATestHub.", :green
+        return
+      elsif check['reachable'] == false
+        shell.say 'Saving the key unverified.', :yellow
+        response = shell.ask 'What is the name of this computer on ' \
+          "MESATestHub? (#{s.computer_name}):", :blue
+        s.computer_name = response unless response.empty?
+        return
+      end
+
+      shell.say check['message'], :red
+      if ENV['MESATESTHUB_API_KEY']
+        raise TestHubError, 'MESATESTHUB_API_KEY was refused; fix or unset it.'
+      end
+      s.api_key = nil
     end
   end
 
@@ -143,7 +158,7 @@ can be revoked on its own, so it is the safer thing to store.'
   # (`[ci optional]`, `[ci fpe]`, `[ci converge]`), in MESATestHub's names.
   CAPABILITIES = %i[full_inlists fpe converge].freeze
 
-  attr_accessor :computer_name, :user_name, :email, :password, :platform,
+  attr_accessor :computer_name, :user_name, :platform,
                 :mesa_mirror, :mesa_work, :platform_version, :processor,
                 :config_file, :base_uri, :github_protocol, :logs_token,
                 :capabilities
@@ -153,15 +168,13 @@ can be revoked on its own, so it is the safer thing to store.'
 
   # many defaults are set in body
   def initialize(
-      computer_name: nil, user_name: nil, email: nil, github_protocol: nil,
+      computer_name: nil, user_name: nil, github_protocol: nil,
       mesa_mirror: nil, platform: nil, platform_version: nil, processor: nil,
       config_file: nil, base_uri: nil, logs_token: nil
   )
     @computer_name = computer_name || Socket.gethostname.scan(/^[^\.]+\.?/)[0]
     @computer_name.chomp!('.') if @computer_name
     @user_name = user_name || (ENV['USER'] || ENV['USERNAME'])
-    @email = email || ''
-    @password = password || ''
     @github_protocol = github_protocol || :ssh
     @mesa_mirror = mesa_mirror ||
       File.join(ENV['HOME'], '.mesa_test', 'mirror')
@@ -204,10 +217,26 @@ can be revoked on its own, so it is the safer thing to store.'
 
   # The per-computer API key: MESATESTHUB_API_KEY from the environment wins
   # over the config file, so a cluster job can supply it without the key
-  # ever being written to disk. nil means "use email + password".
+  # ever being written to disk. nil means no key (see #require_api_key!).
   def api_key
     key = ENV['MESATESTHUB_API_KEY'] || @api_key
     key.nil? || key.strip.empty? ? nil : key.strip
+  end
+
+  # Every MESATestHub request needs a key, so commands that talk to the hub
+  # call this first, before checking anything out or building.
+  def require_api_key!
+    return if api_key
+
+    raise TestHubError, <<~MSG
+      No MESATestHub API key is set. (This version of mesa_test no longer
+      signs in with your email and password.)
+
+      #{API_KEY_HELP}
+      Then run `mesa_test setup` and paste it when asked, or export
+      MESATESTHUB_API_KEY, which overrides the config file (e.g. to keep the
+      key off disk on a cluster).
+    MSG
   end
 
   def masked_api_key
@@ -222,12 +251,10 @@ can be revoked on its own, so it is the safer thing to store.'
   end
 
   def confirm_computer_data
-    puts 'Ready to submit the following data:'
+    puts "This computer's mesa_test settings:"
     puts '-------------------------------------------------------'
     puts "Computer Name           #{computer_name}"
-    puts "API key                 #{masked_api_key || 'none (using email + password)'}"
-    puts "User email              #{email}"
-    puts 'Password                ***********' unless api_key
+    puts "API key                 #{masked_api_key || 'none'}"
     puts "Optional test modes     #{capabilities.select { |_, on| on }.keys.join(', ').then { |c| c.empty? ? 'none' : c }}"
     puts "logs API token          #{logs_token}"
     puts "GitHub Protocol         #{github_protocol}"
@@ -250,8 +277,6 @@ can be revoked on its own, so it is the safer thing to store.'
   def save_computer_data
     data_hash = {
       'computer_name' => computer_name,
-      'email' => email,
-      'password' => password,
       'api_key' => @api_key,
       'capabilities' => capabilities.select { |_, on| on }.keys.map(&:to_s),
       'logs_token' => logs_token,
@@ -271,8 +296,6 @@ can be revoked on its own, so it is the safer thing to store.'
   def load_computer_data
     data_hash = YAML.load(File.read(config_file))
     @computer_name = data_hash['computer_name']
-    @email = data_hash['email']
-    @password = data_hash['password']
     @api_key = data_hash['api_key']
     @capabilities = parse_capabilities(Array(data_hash['capabilities']).join(','))
     @logs_token = data_hash['logs_token']
@@ -284,19 +307,10 @@ can be revoked on its own, so it is the safer thing to store.'
   end
 
   # Parameters to be submitted in JSON format for reporting information about
-  # the submitting user and computer. With an API key the key identifies the
-  # computer, so email and password stay home.
+  # the submitting computer. The API key identifies it; the name is a
+  # cross-check (the hub refuses a key that belongs to another computer).
   def submitter_params
-    if api_key
-      { computer: computer_name, platform_version: platform_version }
-    else
-      {
-        email: email,
-        password: password,
-        computer: computer_name,
-        platform_version: platform_version
-      }
-    end
+    { computer: computer_name, platform_version: platform_version }
   end
 
   # Headers for every MESATestHub request.
@@ -412,23 +426,22 @@ can be revoked on its own, so it is the safer thing to store.'
     [test_case.results_hash]
   end
 
-  # Phone home to testhub and confirm that computer and user are valid. Useful
-  # for confirming that submissions will be accepted before wasting time on a
-  # test later.
-  def confirm_computer
+  # Phone home to testhub and confirm that the API key is valid (and, given a
+  # computer name, that it belongs to that computer). Useful for confirming
+  # that submissions will be accepted before wasting time on a test later.
+  # 'reachable' is false when the hub couldn't be asked at all.
+  def confirm_computer(computer_name: self.computer_name)
     uri = URI.parse(base_uri + '/check_computer.json')
     https = Net::HTTP.new(uri.hostname, uri.port)
     https.use_ssl = base_uri.include? 'https'
 
     request = Net::HTTP::Post.new(uri, testhub_headers)
-    body = { computer_name: computer_name }
-    body.merge!(email: email, password: password) unless api_key
-    request.body = body.to_json
+    request.body = { computer_name: computer_name }.compact.to_json
     response = testhub_request(https, request)
     # if the hub was unreachable, behave as an unverified computer; the
     # network error has already been reported by testhub_request
     if response.nil?
-      return { 'valid' => false,
+      return { 'valid' => false, 'reachable' => false,
                'message' => 'Could not verify this computer with MESATestHub.' }
     end
 
@@ -682,9 +695,8 @@ can be revoked on its own, so it is the safer thing to store.'
     end
   end
 
-  # GET a search query from the testhub. Credentials and the query string
-  # ride in the URL's query parameters (per the testhub search API contract;
-  # the controller also accepts session auth, but a CLI sends them in-band).
+  # GET a search query from the testhub. The query rides in the URL's
+  # query_text parameter; the API key in the Authorization header.
   # Returns the raw Net::HTTP response.
   def search(query_text)
     get_search('/test_instances/search.json', query_text)
@@ -796,9 +808,7 @@ can be revoked on its own, so it is the safer thing to store.'
 
   def get_search(path, query_text)
     uri = URI.parse(base_uri + path)
-    query = { query_text: query_text }
-    query = { email: email, password: password }.merge(query) unless api_key
-    uri.query = URI.encode_www_form(query)
+    uri.query = URI.encode_www_form(query_text: query_text)
 
     https = Net::HTTP.new(uri.hostname, uri.port)
     https.use_ssl = base_uri.include? 'https'

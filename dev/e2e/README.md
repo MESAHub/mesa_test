@@ -11,7 +11,7 @@ bin/rails server
 # in this repo
 TESTHUB_DIR=~/Repositories/MESATestHub \
 MESATESTHUB_URL=http://localhost:3000 \
-ruby dev/e2e/run.rb              # or name scenarios: cluster best nothing legacy
+ruby dev/e2e/run.rb              # or name scenarios: cluster best nothing setup
 ```
 
 How it works:
@@ -45,7 +45,8 @@ Scenarios:
 | `submit-split` | `install --no-submit`, `test --no-submit` (nothing claimed or sent), then a plain `submit`: one request, stored by the hub as a build row plus one per test. Repeating `submit` stores nothing new (fingerprints), and results older than the build are skipped. |
 | `no-result` | A test that dies before writing results: the run continues, it isn't submitted (nor an older leftover `testhub.yml` on a rerun), and its claim is left to lapse. |
 | `nothing` | Runs against a stub hub that always answers "nothing to do" (no testhub needed). Checks: `install best`, `install_and_test best`, and `request_work` exit 3 without creating the work directory or claiming anything; a bad `--jobs` fails before checkout. An unreachable hub must fail some other way, so scripts can tell "nothing to do" from "couldn't ask". |
-| `legacy` | Email + password, explicit SHA, whole suite. Checks: the build status is submitted on its own, then each test is claimed as it starts and submitted as it finishes (results roll in, never one bulk submission), and `count` works. |
+| `no-key` | A 1.2-style config (email + password, no key). Checks: `install_and_test` and `count` exit 1 with instructions for getting a key, before checking anything out or claiming. Then, with `MESATESTHUB_API_KEY` set: explicit SHA, whole suite, serial. The build status is submitted on its own, then each test is claimed as it starts and submitted as it finishes (results roll in, never one bulk submission), and `count` works. |
+| `setup` | The setup wizard over a 1.2-style config. Checks: a wrong key is refused and asked for again; the right one names the computer; the saved config has the key and test modes, and no email or password. |
 
 The testhub server must run from the same checkout as `TESTHUB_DIR` so
 the fixture tasks and the API agree. Scratch files are deleted after a

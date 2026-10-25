@@ -86,6 +86,37 @@ class Scenario
     File.exist?(path) ? File.readlines(path, chomp: true) : []
   end
 
+  # From the fake MESA's timing log: the build's thread settings, and one
+  # { test:, start:, finish:, omp: } per test run.
+  def timing
+    path = File.join(@dir, 'timing_log.txt')
+    lines = File.exist?(path) ? File.readlines(path, chomp: true) : []
+    build = lines.grep(/\Abuild /).first
+    runs = lines.grep_v(/\Abuild /).map do |l|
+      start, finish, test, omp = l.split
+      { test: test, start: start.to_f, finish: finish.to_f, omp: omp.delete_prefix('omp=') }
+    end
+    [build, runs]
+  end
+
+  # No bulk submissions: exactly one build-status submission (empty) plus
+  # one submission per test, none `entire`.
+  def self.one_build_then_per_test?(submissions)
+    submissions.none? { |sub| sub['entire'] } &&
+      submissions.count { |sub| sub['empty'] } == 1 &&
+      submissions.count { |sub| !sub['empty'] } == TESTS.size
+  end
+
+  # Largest number of runs in progress at once.
+  def self.max_overlap(runs)
+    events = runs.flat_map { |r| [[r[:start], 1], [r[:finish], -1]] }.sort_by { |t, d| [t, d] }
+    events.reduce([0, 0]) { |(cur, best), (_, d)| [cur + d, [best, cur + d].max] }.last
+  end
+
+  def work_dir
+    File.join(@dir, 'work')
+  end
+
   def run_modes_in_testhub_yml
     YAML.safe_load(File.read(File.join(@dir, 'work', 'testhub.yml')))['mesa_test_run_modes']
   end
@@ -262,6 +293,10 @@ SCENARIOS = {
               "test claims' environment: #{tests_env}")
       build_env = r['claims'].find { |c| c['scope'] == 'build' }&.dig('environment')
       s.check(build_env == 'SDK e2e-sdk · 3 threads · linux e2e', "build claim's environment: #{build_env.inspect}")
+      # install best reported the build and `submit --empty` reported it
+      # again; the hub keeps one (same build.log fingerprint).
+      s.check(r['submissions'].count { |sub| sub['empty'] } == 1,
+              "build reports stored: #{r['submissions'].count { |sub| sub['empty'] }}")
       build = r['submissions'].find { |sub| sub['empty'] }
       s.check(build && build['use_fpe'] && build['use_full_inlists'],
               "build submission didn't carry its modes: #{build.inspect}")
@@ -325,6 +360,132 @@ SCENARIOS = {
     end
   end,
 
+  # --jobs / --test-threads / --build-threads on a whole-suite run: the
+  # build gets NPROCS + OMP_NUM_THREADS, tests run concurrently with their
+  # own thread count and log, the build status is submitted on its own,
+  # and each test is claimed as it starts and submitted as it finishes.
+  'parallel' => lambda do
+    Scenario.new('install_and_test SHA --jobs 3 (whole suite, parallel)', wants: [], auth: :key).run do |s|
+      status, out = s.mesa_test('install_and_test', s.sha, '--jobs', '3', '--test-threads', '2',
+                                '--build-threads', '4', env: { 'OMP_NUM_THREADS' => '8' })
+      s.check(status.zero?, "install_and_test --jobs 3 exited #{status}")
+      build, runs = s.timing
+      s.check(build == 'build nprocs=4 omp=4', "build threads: #{build.inspect}")
+      s.check(runs.size == TESTS.size && runs.all? { |r| r[:omp] == '2' }, "runs: #{runs}")
+      s.check(Scenario.max_overlap(runs) >= 2, "tests didn't overlap: #{runs}")
+      s.check(out.scan(/\[\d+\/#{TESTS.size}\] \S+: pass/).size == TESTS.size, 'missing per-test progress lines')
+      logs = Dir[File.join(s.work_dir, '*', 'test_suite', '*', 'each_test_run.log')]
+      s.check(logs.size == TESTS.size, "per-test logs: #{logs.size}")
+      r = s.report
+      s.check(Scenario.one_build_then_per_test?(r['submissions']), "submissions: #{r['submissions']}")
+      s.check(r['claims'].size == 1 + TESTS.size && r['claims'].all? { |c| c['status'] == 'fulfilled' },
+              "claims: #{r['claims']}")
+    end
+  end,
+
+  # `install_and_test best --jobs 2`: workers share the dispatch loop
+  # without ever running one test twice at once, and finish the same work
+  # the serial loop does.
+  'parallel-best' => lambda do
+    Scenario.new('install_and_test best --jobs 2', wants: %w[optional converge], auth: :key,
+                                                   capabilities: %w[full_inlists converge]).run do |s|
+      status, out = s.mesa_test('install_and_test', 'best', '--jobs', '2',
+                                env: { 'MESA_SKIP_OPTIONAL' => 't', 'OMP_NUM_THREADS' => '8' })
+      s.check(status.zero?, "install_and_test best --jobs 2 exited #{status}")
+      _, runs = s.timing
+      # No --test-threads: the shell's 8 is split across the 2 jobs.
+      s.check(runs.all? { |r| r[:omp] == '4' }, "per-test threads: #{runs.map { |r| r[:omp] }.uniq}")
+      s.check(out.include?('2 tests at a time, 4 threads each (OMP_NUM_THREADS=8 ÷ 2)'),
+              'no message about the thread split')
+      s.check(runs.size == 2 * TESTS.size, "expected #{2 * TESTS.size} runs, got #{runs.size}")
+      s.check(Scenario.max_overlap(runs) == 2, "max concurrent runs: #{Scenario.max_overlap(runs)}")
+      same_test_overlap = runs.group_by { |r| r[:test] }.values.any? { |rs| Scenario.max_overlap(rs) > 1 }
+      s.check(!same_test_overlap, 'one test ran twice at the same time')
+      s.check(tests_logged(s).none? { |l| l.include?('skip_optional=unset') && !l.include?('res=unset') },
+              'a run combined full inlists and converge')
+      r = s.report
+      s.check(r['claims'].all? { |c| c['status'] == 'fulfilled' }, "claims: #{r['claims']}")
+      s.check(r['runs'].size == 2 * TESTS.size, "hub saw #{r['runs'].size} runs")
+      s.check(r['satisfied']['optional'] && r['satisfied']['converge'], "requests: #{r['satisfied']}")
+    end
+  end,
+
+  # `test` (all tests) and a later plain `submit` also never send a bulk
+  # submission: `test --no-submit` sends nothing at all, then `submit` sends
+  # the build status and one submission per test with results.
+  'submit-split' => lambda do
+    Scenario.new('test --no-submit, then submit (no bulk submission)', wants: [], auth: :key).run do |s|
+      s.mesa_test('install', s.sha, '--no-submit')
+      status, = s.mesa_test('test', '--no-submit')
+      s.check(status.zero?, "test --no-submit exited #{status}")
+      s.check(tests_logged(s).size == TESTS.size, "runs: #{tests_logged(s)}")
+      r = s.report
+      s.check(r['submissions'].empty? && r['claims'].empty?, '--no-submit claimed or submitted something')
+
+      # One request; the hub stores a build row plus one row per test.
+      status, = s.mesa_test('submit')
+      s.check(status.zero?, "submit exited #{status}")
+      r = s.report
+      s.check(Scenario.one_build_then_per_test?(r['submissions']), "submissions: #{r['submissions']}")
+      s.check(r['runs'].size == TESTS.size, "hub saw #{r['runs'].size} runs")
+
+      # Submitting again stores nothing new (fingerprints)...
+      s.mesa_test('submit')
+      s.check(s.report['submissions'].size == 1 + TESTS.size, 'a repeated submit stored duplicates')
+      # ...and results older than the build are never sent.
+      FileUtils.touch(File.join(s.work_dir, 'build.log'))
+      _, out = s.mesa_test('submit')
+      s.check(out.include?("Skipping #{TESTS.size} test results older than this build"),
+              'stale results were not skipped')
+      s.check(s.report['submissions'].size == 1 + TESTS.size, 'stale results were stored')
+    end
+  end,
+
+  # `install` reports its build like `test` reports tests: claim, build,
+  # submit -- or neither with --no-submit. A failed build is reported (with
+  # compiled: false) and exits non-zero.
+  'install' => lambda do
+    Scenario.new('install reports its build; --no-submit and failures', wants: [], auth: :key).run do |s|
+      status, = s.mesa_test('install', s.sha, '--no-submit')
+      r = s.report
+      s.check(status.zero? && r['submissions'].empty? && r['claims'].empty?,
+              "install --no-submit: exit #{status}, #{r['submissions'].size} submissions, #{r['claims'].size} claims")
+
+      status, = s.mesa_test('install', s.sha, '--no-checkout')
+      r = s.report
+      s.check(status.zero?, "install exited #{status}")
+      s.check(r['submissions'].map { |sub| sub.values_at('empty', 'compiled') } == [[true, true]],
+              "build report: #{r['submissions']}")
+      s.check(r['claims'].map { |c| [c['scope'], c['status']] } == [%w[build fulfilled]], "claims: #{r['claims']}")
+
+      status, = s.mesa_test('install', s.sha, '--no-checkout', env: { 'FAKE_INSTALL_FAIL' => '1' })
+      s.check(status == 1, "a failed build exited #{status}, not 1")
+      s.check(s.report['submissions'].map { |sub| sub['compiled'] }.include?(false),
+              'the failed build was not reported')
+    end
+  end,
+
+  # A test that dies before writing results isn't submitted -- neither as
+  # a crash that stops the run nor as an older run's leftover testhub.yml
+  # -- and its claim is left to lapse.
+  'no-result' => lambda do
+    Scenario.new('a test that writes no results', wants: [], auth: :key).run do |s|
+      status, out = s.mesa_test('install_and_test', s.sha, env: { 'FAKE_NO_RESULT' => 'fake_beta' })
+      s.check(status.zero?, "install_and_test exited #{status}")
+      s.check(out.include?('star/fake_beta wrote no results; nothing submitted'), 'no notice for the missing result')
+      r = s.report
+      s.check(r['runs'].map { |run| run['test'] }.sort == %w[binary/fake_gamma star/fake_alpha],
+              "runs: #{r['runs'].map { |run| run['test'] }}")
+      beta = r['claims'].find { |c| c['test'] == 'star/fake_beta' }
+      s.check(beta && beta['status'] == 'pending', "fake_beta's claim: #{beta.inspect}")
+
+      # Rerun fake_alpha so it has a leftover result, then make it fail: the
+      # old testhub.yml must not be sent as the new run's result.
+      s.mesa_test('test', '1', env: { 'FAKE_NO_RESULT' => 'fake_alpha' })
+      s.check(s.report['runs'].size == 2, 'a leftover result was submitted')
+    end
+  end,
+
   # When the hub has nothing for this computer, every dispatching command
   # exits NOTHING_TO_DO_EXIT without touching the work directory or claiming
   # anything -- and an unreachable hub is an ordinary failure, not "nothing
@@ -347,6 +508,12 @@ SCENARIOS = {
         hub.stop
       end
 
+      # Bad option values fail before anything is checked out or built.
+      status, out = standalone_mesa_test(dir, 'http://127.0.0.1:9', 'install_and_test', 'main', '--jobs', '0')
+      c.check(status == 1 && out.include?('--jobs must be a whole number'),
+              "--jobs 0 exited #{status.inspect}:\n#{out}")
+      c.check(!File.exist?(File.join(dir, 'work')), 'a bad --jobs still checked out')
+
       closed = TCPServer.new('127.0.0.1', 0)
       port = closed.addr[1]
       closed.close
@@ -357,18 +524,24 @@ SCENARIOS = {
     check
   end,
 
-  # Old-style whole-suite run with email + password and an explicit SHA:
-  # still works, claims everything up front, one submission fulfills it all.
+  # Whole-suite run with email + password and an explicit SHA: the build
+  # status goes in on its own, then each test is claimed as it starts and
+  # submitted as it finishes (no bulk submission).
   'legacy' => lambda do
     Scenario.new('install_and_test SHA with email + password', wants: [], auth: :password).run do |s|
-      status, = s.mesa_test('install_and_test', s.sha, '--no-skip-optional',
-                            env: { 'MESA_SKIP_OPTIONAL' => 't' })
+      status, out = s.mesa_test('install_and_test', s.sha, '--no-skip-optional',
+                                env: { 'MESA_SKIP_OPTIONAL' => 't' })
       s.check(status.zero?, "install_and_test exited #{status}")
+      # Results roll in: the first test is submitted before the last starts.
+      first_submit = out.index('Successfully submitted instance')
+      last_start = out.rindex('Testing ')
+      s.check(first_submit && last_start && first_submit < last_start,
+              'tests were not submitted as they finished')
       runs = tests_logged(s)
       s.check(runs.size == TESTS.size && runs.all? { |l| l.include?('skip_optional=unset') },
               "--no-skip-optional not applied: #{runs}")
       r = s.report
-      s.check(r['submissions'].map { |sub| sub['entire'] } == [true], "submissions: #{r['submissions']}")
+      s.check(Scenario.one_build_then_per_test?(r['submissions']), "submissions: #{r['submissions']}")
       s.check(r['claims'].size == 1 + TESTS.size && r['claims'].all? { |c| c['status'] == 'fulfilled' },
               "claims: #{r['claims']}")
 

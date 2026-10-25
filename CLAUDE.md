@@ -4,6 +4,64 @@ A Ruby gem that provides a CLI between MESA (Modules for Experiments in Stellar 
 
 Author: William Wolf (wolfwm@uwec.edu). License MIT. Homepage: https://github.com/MESAHub/mesa_test.
 
+## Keep mesa_test lean
+
+mesa_test runs on a heterogeneous fleet of machines that update rarely, so
+every behavior baked in here is a behavior that can go stale. The lesson
+learned over many years: keep this client thin, like a thin controller in
+MVC.
+
+- **MESA owns how tests run and what they record.** That means `./install`,
+  `./each_test_run`, and the per-test `testhub.yml`. mesa_test sets
+  environment variables, runs MESA's scripts, and forwards the YAML MESA
+  writes. It doesn't parse MESA's output or second-guess results. When a
+  new kind of information is needed, have MESA write it into
+  `testhub.yml`.
+- **MESATestHub owns policy:** what to test next, what counts as a request
+  met, pending vs. untested, checksum grouping. Tuning any of it must never
+  need a client update.
+- **New capabilities are opt-in, and the plain path keeps working.**
+  `install SHA`, `test`, `submit`, and `install_and_test SHA` with no new
+  flags must behave as they always have, for users who never upgrade their
+  habits. A new flag may add a MESA dependency. The default path should
+  not.
+- **Before adding anything:** could MESA or the hub do this instead? If not,
+  record the new MESA assumption in the list below.
+
+## What mesa_test assumes about MESA
+
+When MESA changes how tests are run or recorded, check this list to see
+whether a mesa_test update is needed. Long-standing, used by every run:
+
+- `./clean` and `./install` at the top of `$MESA_DIR`. A successful build
+  leaves `build.log` containing "MESA installation was successful", and the
+  install writes `$MESA_DIR/testhub.yml` with `compiler`,
+  `compiler_version`, `sdk_version`, `math_backend`. Only those four keys
+  are read (`Mesa#compiler_hash`).
+- `<module>/test_suite/` for `star`, `binary`, `astero`, each with:
+  - `./list_tests`, printing `<number> <name>` lines;
+  - `./each_test_run`, which with no argument runs every test and with
+    `<number>` runs one;
+  - one directory per test.
+- Each test writes `testhub.yml` in its directory. That file is submitted
+  as-is, apart from the keys mesa_test adds to the payload.
+- `MESA_DIR` selects the installation.
+
+Opt-in features add these (leave them out and they don't apply):
+
+| Feature | Assumes |
+|---|---|
+| `--skip-optional`, `--fpe`, `--converge` / `--resolution-factor`, `best` mode | MESA reads `MESA_SKIP_OPTIONAL`, `MESA_FPE_CHECKS_ON` (at compile time as well as run time), and `MESA_TEST_SUITE_RESOLUTION_FACTOR`, and records the result in each test's `testhub.yml` as `run_optional` / `fpe_checks` / `resolution_factor` |
+| `--build-threads` | `./install` sizes `make -j` from `NPROCS` (all cores if unset) |
+| `--test-threads`, `--jobs` | tests take their thread count from `OMP_NUM_THREADS` |
+| `--jobs` | concurrent `./each_test_run <number>` calls in one `test_suite` directory don't interfere (each test works only in its own directory). True today and long relied on by GNU-parallel scripts, but a convention, not a promise MESA makes. |
+| recorded run modes (`install` with mode flags, or `install best`) | `$MESA_DIR/testhub.yml` stays a YAML mapping that mesa_test can append a `mesa_test_run_modes:` block to |
+
+Possible ways to get thinner later: keep recorded run modes in a file
+mesa_test owns instead of appending to MESA's `testhub.yml`, and move
+parallelism into MESA itself (e.g. `./each_test_run --jobs N`), with
+`--jobs` just passing it through.
+
 ## Layout
 
 This is an intentionally minimal gem — no Bundler scaffolding, no Rakefile, no `spec/`, no `test/`. The whole gem is two files:
@@ -31,7 +89,13 @@ MESATestHub can tell a computer what to work on and track what is in flight. The
   - Claims are advisory. Failures are warned about and swallowed, never fatal.
   - The client never stores claim ids. The server fulfills claims by matching computer, commit, and test when the submission arrives.
   - `install`, `test`, and `install_and_test` claim by default; turn it off with `--no-claim`.
-  - Whole-suite runs claim with `all_test_cases: true`, and only when `--module` is `all`.
+  - **No bulk submissions, and claims are just-in-time** (Oct 2026):
+    - **`install` reports its build like `test` reports tests**: claim, build, submit the build status (an `empty` submission, with the build log on failure). It exits 1 on a failed build. `--no-submit` does neither the claim nor the report, so it's the old local-only behavior. `test` no longer sends a build report of its own.
+    - Each test is claimed right as it starts and submitted right as it finishes, so results roll in and a claim always means "running now".
+    - **Plain `submit`** sends one request: the build status plus every test with results from *this* build (`submittable_tests` skips `testhub.yml` files older than `build.log`, left in a reused work dir). The hub (Oct 2026+) stores it as a build row plus one row per test; older hubs keep it as one combined row.
+    - **Fingerprints:** every submission carries a top-level `fingerprints` hash (`build` → SHA-256 of `build.log`, `<module>/<test>` → SHA-256 of `testhub.yml`). The hub ignores results it already has, so re-running `submit`, a head node re-sending what compute nodes sent, or `install best` followed by a habitual `submit --empty` all over-report harmlessly. Top-level, not per instance, so an older hub that builds instances straight from their params doesn't reject the request.
+    - The hub's `all_test_cases` claim endpoint remains, but this client no longer uses it.
+    - Serial runs loop over tests in mesa_test (`./each_test_run N` via `do_one`, output on the terminal) rather than calling `./each_test_run` once per module, so per-test submission is possible, and Ctrl-C stops the whole run instead of moving on to the next module.
   - Claims carry the run's environment (`MesaTestSubmitter#claim_environment`), which the hub shows on pending tests. Test claims use the build's `testhub.yml` compiler record. Build claims are made before compiling, so they send only the shell's `MESASDK_VERSION`. Both send `OMP_NUM_THREADS` and the config's `platform_version`.
 - **Run modes are recorded in the work dir.**
   - `install` appends a `mesa_test_run_modes:` block (`fpe`, `skip_optional`, `resolution_factor`) to `$MESA_DIR/testhub.yml`, after the compiler keys MESA's install writes. See `Mesa#record_run_modes` / `#recorded_run_modes`.
@@ -58,6 +122,13 @@ MESATestHub can tell a computer what to work on and track what is in flight. The
   - Precedence for manual runs: `--resolution-factor`, then the shell's `MESA_TEST_SUITE_RESOLUTION_FACTOR`, then 0.8.
   - A commit can name its factor (`[ci converge 0.5]`), which the hub sends as the dispatch's `converge_factor`. In `best` mode that factor wins over both the flag and the shell, with a warning when they differ (`dispatch_run_modes`).
   - The factor is recorded at install like any mode, so array jobs use it too, and `test` warns if the shell's value differs.
+- **Parallel testing (opt-in):** `--jobs N` on `test` (all-tests mode) and `install_and_test`; `--test-threads N` sets each test's `OMP_NUM_THREADS` (unset with `--jobs N` > 1: the shell's `OMP_NUM_THREADS`, else the core count, is the budget for the whole run, split evenly and rounded down, at least 1, and announced; serial runs leave the shell alone); `--build-threads N` sets `NPROCS` (MESA's `./install` runs `make -j$NPROCS`, all cores if unset) plus `OMP_NUM_THREADS` for the build.
+  - With none set, behavior is exactly as before: serial `./each_test_run` per module, in the shell's environment.
+  - Parallel tests run via `MesaTestCase#run_isolated`: one `./each_test_run <n>` subprocess each, with its own `chdir:` and env, output in `each_test_run.log` in the test dir. `#do_one` / `visit_dir` change the process-wide cwd and ENV, so they're unsafe across threads.
+  - The worker pool is `run_workers` / `parallel_each` in lib.
+  - Parallel runs submit each test as it finishes, like serial runs (see "No bulk submissions" above).
+  - `install_and_test best --jobs N` runs N dispatch→claim→run→submit workers, with dispatch+claim under one lock. The hub won't hand out a test this computer holds a claim on, so no test runs twice at once. A worker that gets 204 waits while others are busy (their results can open more work) and stops once all are idle.
+  - Ctrl-C kills the worker threads first (so nothing half-run is submitted), then each test's process group; exit 130.
 - **Capabilities:** the optional modes a computer can run live in config under `capabilities: [full_inlists, fpe, converge]`, set in the setup wizard. Override per run with the mode flags.
 
 ## Submission targets

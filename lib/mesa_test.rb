@@ -8,6 +8,7 @@ require 'net/https'
 require 'thor'
 require 'json'
 require 'base64'
+require 'digest'
 
 MesaDirError = Class.new(StandardError)
 TestCaseDirError = Class.new(StandardError)
@@ -331,28 +332,42 @@ can be revoked on its own, so it is the safer thing to store.'
   # test cases and the test results. These will be encoded as an array of
   # JSON objects.
   def instance_params(mesa)
-    has_errors = []
-    res = []
-    mesa.test_case_names.each do |mod, names|
-      names.each do |test_name|
-        begin
-          test_case = mesa.test_cases[mod][test_name]
-          res << test_case.results_hash
-        rescue TestCaseDirError
-          # shell.say "It appears that #{test_case.test_name} has not been "\
-          #           'run yet. Unable to submit data for this test.', :red
-          has_errors << test_case
+    submittable_tests(mesa).map(&:results_hash)
+  end
+
+  # Tests with results from *this* build: run, readable, and not older than
+  # the build itself. A reused work directory (`install --no-checkout`) can
+  # still hold testhub.yml files from an earlier build; those would be filed
+  # under the wrong commit, so they're skipped (and counted).
+  def submittable_tests(mesa)
+    built_at = mesa.built_at
+    unread = []
+    stale = 0
+    tests = mesa.test_case_names.flat_map do |mod, names|
+      names.filter_map do |test_name|
+        test_case = mesa.test_cases[mod][test_name]
+        next unless test_case&.ran?
+
+        if built_at && File.mtime(test_case.testhub_file) < built_at
+          stale += 1
+          next
         end
+        test_case.results_hash
+        test_case
+      rescue TestCaseDirError, Psych::Exception
+        unread << test_case
+        nil
       end
     end
-    unless has_errors.empty?
-      shell.say "The following test cases could NOT be read for submission:",
-                :red
-      has_errors.each do |test_case|
-        shell.say "- #{test_case.test_name}", :red
-      end
+    if stale.positive?
+      shell.say "Skipping #{stale} test result#{'s' unless stale == 1} older than this " \
+                'build (left over from an earlier one).', :yellow
     end
-    res
+    unless unread.empty?
+      shell.say 'The following test cases could NOT be read for submission:', :red
+      unread.each { |test_case| shell.say "- #{test_case.test_name}", :red }
+    end
+    tests
   end
 
   # The build's recorded run modes in the submissions API's `claim:` block
@@ -456,11 +471,19 @@ can be revoked on its own, so it is the safer thing to store.'
     request_data = {submitter: submitter_params,
                     commit: commit_params(mesa, empty: empty, entire: !empty)}
     request_data[:claim] = run_mode_params(mesa) if mesa.recorded_run_modes.any?
+    # Fingerprints let MESATestHub ignore results it already has (a retried
+    # submit, a head node re-sending what compute nodes sent).
+    fingerprints = {}
+    fingerprints['build'] = mesa.build_fingerprint if mesa.build_fingerprint
     # don't need test instances if it's an empty submission or if compilation
     # failed
+    tests = []
     if !empty && request_data[:commit][:compiled]
-      request_data[:instances] = instance_params(mesa)
+      tests = submittable_tests(mesa)
+      request_data[:instances] = tests.map(&:results_hash)
+      tests.each { |t| fingerprints[t.fingerprint_key] = t.fingerprint }
     end
+    request_data[:fingerprints] = fingerprints unless fingerprints.empty?
     request.body = request_data.to_json
 
     # actually do the submission
@@ -484,15 +507,13 @@ can be revoked on its own, so it is the safer thing to store.'
 
       # compilation succeded, so submit any logs for failing tests
       res = true
-      unless empty
-        mesa.test_cases.each do |mod, test_case_hash|
-          test_case_hash.each do |tc_name, test_case|
-            # get at each individual test case, see if it failed, and if it
-            # did, submit its log files
-            if !test_case.passed? || force_logs
-              res &&= submit_test_log(test_case, skip_passing: !force_logs)
-            end
-          end
+      # logs for the failing tests just submitted (or all, with force_logs)
+      tests.each do |test_case|
+        if !test_case.passed? || force_logs
+          # (not `res &&= submit_test_log(...)`: after one failed upload that
+          # would skip every remaining test's logs)
+          sent = submit_test_log(test_case, skip_passing: !force_logs)
+          res &&= sent
         end
       end
 
@@ -522,7 +543,8 @@ can be revoked on its own, so it is the safer thing to store.'
     # entire (... there is only test case)
     request_data = {submitter: submitter_params,
                     commit: commit_params(mesa, empty: false, entire: false),
-                    instances: single_instance_params(test_case)}
+                    instances: single_instance_params(test_case),
+                    fingerprints: { test_case.fingerprint_key => test_case.fingerprint }}
     request_data[:claim] = run_mode_params(mesa) if mesa.recorded_run_modes.any?
     request.body = request_data.to_json
 
@@ -1123,6 +1145,18 @@ class Mesa
     )
   end
 
+  # Fingerprint of this build (a hash of build.log), so MESATestHub can
+  # recognize a build report it already has. nil before any build.
+  def build_fingerprint
+    file_fingerprint(File.join(mesa_dir, 'build.log'))
+  end
+
+  # When this build finished (build.log's mtime), or nil.
+  def built_at
+    build_log = File.join(mesa_dir, 'build.log')
+    File.exist?(build_log) ? File.mtime(build_log) : nil
+  end
+
   def install_attempted?
     File.exist? File.join(mesa_dir, 'testhub.yml')
   end
@@ -1297,6 +1331,23 @@ class MesaTestCase
     File.join(test_case_dir, 'testhub.yml')
   end
 
+  # Run this test like #do_one, but as its own subprocess with its own
+  # working directory and environment (+env+ overrides; nil unsets), so
+  # several can run at once -- #do_one changes the process-wide directory
+  # and expects the environment to be set globally. Output goes to
+  # each_test_run.log in the test's directory. Returns true if
+  # each_test_run exited cleanly (the test's pass/fail is in testhub.yml).
+  def run_isolated(env: {})
+    log = File.join(test_case_dir, 'each_test_run.log')
+    pid = Process.spawn(env, './each_test_run', position.to_s,
+                        chdir: test_suite_dir, out: log, err: %i[child out], pgroup: true)
+    RUNNING_TESTS_LOCK.synchronize { RUNNING_TESTS[pid] = test_name }
+    _, status = Process.wait2(pid)
+    status.success?
+  ensure
+    RUNNING_TESTS_LOCK.synchronize { RUNNING_TESTS.delete(pid) } if pid
+  end
+
   # just punt to +each_test_run+ in the test_suite directory. It's your problem
   # now, sucker!
   def do_one
@@ -1312,6 +1363,23 @@ class MesaTestCase
                                  "#{test_name}.")
     end
     YAML.load(File.read(testhub_file))
+  end
+
+  # How MESATestHub keys this test's fingerprint: "<module>/<test>".
+  def fingerprint_key
+    "#{mod}/#{test_name}"
+  end
+
+  # Fingerprint of this run's results (a hash of testhub.yml).
+  def fingerprint
+    file_fingerprint(testhub_file)
+  end
+
+  # Whether this test wrote results at or after +time+, i.e. during the
+  # run that started then (not a testhub.yml left from an earlier run).
+  # mtimes can be whole seconds, so compare at that resolution.
+  def ran_since?(time)
+    ran? && File.mtime(testhub_file) >= time.floor
   end
 
   # rough proxy for whether or not the test has even been run
@@ -1516,6 +1584,54 @@ def dispatch_run_modes(rec, preferred: nil, preferred_source: nil)
   modes
 end
 
+# Process groups of tests started by MesaTestCase#run_isolated, so an
+# interrupted parallel run can stop them all.
+RUNNING_TESTS = {}
+RUNNING_TESTS_LOCK = Mutex.new
+
+def stop_running_tests
+  pids = RUNNING_TESTS_LOCK.synchronize { RUNNING_TESTS.keys }
+  pids.each do |pid|
+    Process.kill('TERM', -pid)
+  rescue Errno::ESRCH, Errno::EPERM
+    nil
+  end
+end
+
+# Run +jobs+ worker threads, each calling the block with its index until
+# the block returns :done. On Ctrl-C, kills the workers first (so none
+# goes on to submit a half-run test), then every running test, then
+# re-raises. Exceptions in a worker propagate when it's joined.
+def run_workers(jobs)
+  workers = []
+  jobs.times do |i|
+    workers << Thread.new do
+      Thread.current.report_on_exception = false
+      loop { break if yield(i) == :done }
+    end
+  end
+  workers.each(&:join)
+rescue Interrupt
+  workers.each(&:kill)
+  stop_running_tests
+  raise
+end
+
+# Hand each of +items+ to the block, +jobs+ at a time.
+def parallel_each(items, jobs)
+  queue = Queue.new
+  items.each { |item| queue << item }
+  run_workers([jobs, items.size].min) do
+    item = begin
+      queue.pop(true)
+    rescue ThreadError
+      next :done
+    end
+    yield item
+    nil
+  end
+end
+
 # Run the block with +overrides+ applied to ENV (nil deletes a variable),
 # restoring the previous values afterwards.
 def with_env(overrides)
@@ -1524,6 +1640,11 @@ def with_env(overrides)
   yield
 ensure
   saved&.each { |k, v| v.nil? ? ENV.delete(k) : ENV[k] = v }
+end
+
+# SHA-256 of a file's contents, or nil if it doesn't exist.
+def file_fingerprint(path)
+  File.exist?(path) ? Digest::SHA256.file(path).hexdigest : nil
 end
 
 # encode the contents of a file as base-64

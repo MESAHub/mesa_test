@@ -35,10 +35,10 @@ computers' keys works.
 
     mesa_test install_and_test best
 
-asks MESATestHub for the commit that most needs testing, builds it, and then
-runs tests one at a time in the order (and modes, e.g. full inlists for
-`[ci optional]` commits) it asks for, submitting each as it finishes. To just
-see what it would pick:
+asks MESATestHub for the commit that most needs testing (one this computer
+hasn't tested yet) and the modes to run it in (e.g. full inlists for a
+`[ci optional]` commit), then builds it and runs the whole test suite just
+as `install_and_test SHA` would. To just see what it would pick:
 
     mesa_test request_work
 
@@ -68,8 +68,8 @@ By default tests run one after another, using your shell's
   cores in total".
 
 `mesa_test test` (with no test name) takes `--jobs` and `--test-threads`
-too, and `install_and_test best` hands each of its `--jobs` workers its own
-test. Each test's output goes to `each_test_run.log` in its directory, and
+too. Tests run in MESA's order (star, binary, astero, each in its
+`do1_test_source` order, which lists the longest first). Each test's output goes to `each_test_run.log` in its directory, and
 mesa_test prints a line as each finishes. Ctrl-C stops all running tests.
 
 Whether serial or parallel, results go to MESATestHub as they happen: the

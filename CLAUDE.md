@@ -108,10 +108,8 @@ MESATestHub can tell a computer what to work on and track what is in flight. The
   - With `best` they say what the computer is *willing* to do, overriding config `capabilities`, and the hub's request decides the actual modes.
 - **Nothing to do exits 3** (`MesaTest::NOTHING_TO_DO_EXIT`), for `install best`, `install_and_test best`, and `request_work`. It exits before touching the work dir, so scripts can do `mesa_test install best || exit`.
 - **`install_and_test best` / `install best`:**
-  - The server picks the commit.
-  - `best` mode then submits the build on its own, and loops test-scope dispatch (pinned to the built SHA) → claim → run → `submit_instance` until it gets a 204.
-  - A repeated recommendation stops the loop, so it can't spin.
-  - An explicit SHA keeps the old whole-suite behavior.
+  - The server picks the commit and the run modes (build-scope dispatch); that's all `best` changes. The build is then submitted on its own and the suite runs exactly as with an explicit SHA (`run_tests`: MESA's order, `--jobs`, per-test claim and submission).
+  - Until Oct 2026, `install_and_test best` instead asked the hub for each test (test-scope dispatch). That handed tests out alphabetically (astero first, the long star tests last), and idle `--jobs` workers polled the hub and printed "nothing more" every 5 s through the long tail. The hub's test-scope dispatch remains, for `request_work --scope test`, but mesa_test no longer runs on it.
 - **Run modes** (`run_flag_env` / `with_env` in lib):
   - A dispatch flag only ever *adds* to the user's environment; a false flag leaves their setup alone.
   - `full_inlists` unsets `MESA_SKIP_OPTIONAL`.
@@ -127,7 +125,6 @@ MESATestHub can tell a computer what to work on and track what is in flight. The
   - Parallel tests run via `MesaTestCase#run_isolated`: one `./each_test_run <n>` subprocess each, with its own `chdir:` and env, output in `each_test_run.log` in the test dir. `#do_one` / `visit_dir` change the process-wide cwd and ENV, so they're unsafe across threads.
   - The worker pool is `run_workers` / `parallel_each` in lib.
   - Parallel runs submit each test as it finishes, like serial runs (see "No bulk submissions" above).
-  - `install_and_test best --jobs N` runs N dispatch→claim→run→submit workers, with dispatch+claim under one lock. The hub won't hand out a test this computer holds a claim on, so no test runs twice at once. A worker that gets 204 waits while others are busy (their results can open more work) and stops once all are idle.
   - Ctrl-C kills the worker threads first (so nothing half-run is submitted), then each test's process group; exit 130.
 - **Capabilities:** the optional modes a computer can run live in config under `capabilities: [full_inlists, fpe, converge]`, set in the setup wizard. Override per run with the mode flags.
 

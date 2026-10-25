@@ -367,15 +367,13 @@ class MesaTest < Thor
   Run modes (--skip-optional, --fpe, --converge) apply to the build and
   every test; unset ones are left to your shell's environment.
 
-  If SHA is `best`, MesaTestHub drives the whole run instead:
-  it picks the commit to build (and whether to build it with FPE checks),
-  the build result is submitted on its own, and then tests run one at a
-  time in the order MesaTestHub asks for them, each submitted as it
-  finishes, until there is nothing left that this computer can usefully
-  run. The mode flags then say what this computer is willing to do
-  (overriding `capabilities` in the config file): commits asking for
-  [ci optional] or [ci converge] get those runs only if it's willing.
-  --module and --no-submit don't apply in this mode. If nothing needs
+  If SHA is `best`, MesaTestHub picks the commit (one this computer hasn't
+  tested yet) and the run modes (FPE checks, plus full inlists or a
+  convergence run if the commit asks for one); everything else is the
+  ordinary run above. The mode flags then say what this computer is
+  willing to do (overriding `capabilities` in the config file): commits
+  asking for [ci optional] or [ci converge] get those runs only if it's
+  willing. --no-submit doesn't apply in this mode. If nothing needs
   testing, mesa_test exits with status #{NOTHING_TO_DO_EXIT}.
   LONGDESC
 
@@ -568,66 +566,24 @@ class MesaTest < Thor
       submit_build(s, m)
       exit 1
     end
+    mod = options[:module].downcase.to_sym
     check_mesa(m)
-    update_mesa(mesa: m, mod: :all)
+    update_mesa(mesa: m, mod: mod)
 
     # Report the build on its own; this also fulfills the build claim.
-    s.submit_commit(m, empty: true)
-    # For test dispatch, can_fpe means "this build has FPE checks".
-    caps = capabilities_for(s).merge(fpe: m.recorded_run_modes[:fpe] == true)
-    all_submitted = if jobs > 1
-                      run_dispatched_tests_parallel(s, m, caps)
-                    else
-                      run_dispatched_tests(s, m, caps)
-                    end
-    m.remove if all_submitted && options[:destroy]
-  end
-
-  # Ask for, claim, run, and submit one test at a time on +m+'s commit
-  # until MesaTestHub has nothing more for this computer. Returns true if
-  # every submission went through.
-  def run_dispatched_tests(s, m, caps)
-    seen = {}
-    all_submitted = true
-    m.with_mesa_dir do
-      loop do
-        rec = dispatch_or_exit(s, scope: 'test', sha: m.sha, capabilities: caps)
-        break unless rec
-
-        label = "#{rec['test_case_module']}/#{rec['test_case_name']}"
-        key = [label, rec['flags']]
-        if seen[key]
-          # The last result evidently didn't register; don't spin.
-          shell.say "MesaTestHub asked for #{label} again; stopping.", :red
-          all_submitted = false
-          break
-        end
-        seen[key] = true
-
-        # FPE is the build's; the run-time modes are this dispatch's (at most
-        # one, so a run answers one request cleanly).
-        modes = m.recorded_run_modes.slice(:fpe).merge(modes_for(rec).except(:fpe))
-        t = begin
-          m.find_test_case(test_case_name: rec['test_case_name'],
-                           mod: rec['test_case_module'].to_sym)
-        rescue TestCaseDirError => e
-          shell.say "#{e.message} Stopping.", :red
-          all_submitted = false
-          break
-        end
-        if options[:claim]
-          s.claim(sha: m.sha, scope: 'test', mod: t.mod, test_case: t.test_name,
-                  flags: claim_flags(modes), dispatched_at: rec['dispatched_at'], mesa: m)
-        end
-        started = Time.now
-        with_env(run_mode_env(modes)) { t.do_one }
-        # (not `&&=`: that would skip submitting every test after a failure)
-        submitted = submit_result(s, m, t, started)
-        all_submitted &&= submitted
+    build_submitted = submit_build(s, m)
+    # MesaTestHub chose the commit and its modes; from here it's an ordinary
+    # whole-suite run, as `install_and_test SHA` does it: MESA's order,
+    # --jobs at a time, each test claimed as it starts and submitted as it
+    # finishes.
+    all_submitted = with_env(run_mode_env(m.recorded_run_modes).merge(test_thread_env)) do
+      m.with_mesa_dir do
+        run_tests(s, m, mod: mod, submit: true, flags: claim_flags(modes))
       end
     end
-    all_submitted
+    m.remove if build_submitted && all_submitted && options[:destroy] && m.installed?
   end
+
 
   def jobs
     j = options[:jobs].to_i
@@ -784,85 +740,6 @@ class MesaTest < Thor
                      (Time.now - started) / 60.0), outcome == 'pass' ? :green : :red
   end
 
-  # `install_and_test best --jobs N`: N workers, each asking for, claiming,
-  # running, and submitting one test at a time. Asking and claiming happen
-  # under a lock, so the hub never hands two workers the same test (it
-  # won't recommend a test this computer holds a claim on). A worker that
-  # hears "nothing more" waits while others are still running -- their
-  # results can open up more work (e.g. a convergence rerun) -- and stops
-  # once everyone is idle.
-  def run_dispatched_tests_parallel(s, m, caps)
-    seen = {}
-    lock = Mutex.new
-    busy = 0
-    stop = false
-    all_submitted = true
-    count = 0
-    m.with_mesa_dir do
-      run_workers(jobs) do
-        job = lock.synchronize do
-          next :done if stop
-
-          rec = dispatch_or_exit(s, scope: 'test', sha: m.sha, capabilities: caps)
-          next(busy.zero? ? :done : :wait) unless rec
-
-          label = "#{rec['test_case_module']}/#{rec['test_case_name']}"
-          key = [label, rec['flags']]
-          if seen[key]
-            shell.say "MesaTestHub asked for #{label} again; stopping.", :red
-            stop = true
-            all_submitted = false
-            next :done
-          end
-          seen[key] = true
-          modes = m.recorded_run_modes.slice(:fpe).merge(modes_for(rec).except(:fpe))
-          t = begin
-            m.find_test_case(test_case_name: rec['test_case_name'],
-                             mod: rec['test_case_module'].to_sym)
-          rescue TestCaseDirError => e
-            shell.say "#{e.message} Stopping.", :red
-            stop = true
-            all_submitted = false
-            next :done
-          end
-          if options[:claim]
-            s.claim(sha: m.sha, scope: 'test', mod: t.mod, test_case: t.test_name,
-                    flags: claim_flags(modes), dispatched_at: rec['dispatched_at'], mesa: m)
-          end
-          busy += 1
-          shell.say "Testing #{label}", :yellow
-          [t, modes]
-        end
-        next :done if job == :done
-        if job == :wait
-          sleep 5
-          next nil
-        end
-
-        t, modes = job
-        started = Time.now
-        finished = false
-        begin
-          t.run_isolated(env: run_mode_env(modes).merge(test_thread_env))
-          finished = true
-        ensure
-          # Only a test that ran to the end is reported and submitted; an
-          # interrupted one just frees its slot.
-          lock.synchronize do
-            busy -= 1
-            if finished
-              count += 1
-              report_test(t, started, "[#{count}]")
-              submitted = submit_result(s, m, t, started)
-              all_submitted &&= submitted
-            end
-          end
-        end
-        nil
-      end
-    end
-    all_submitted
-  end
 
   # clean + install +m+ with +modes+ in the environment, then record the
   # modes in $MESA_DIR/testhub.yml for later `test`/`submit` runs.

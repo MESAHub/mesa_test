@@ -321,9 +321,10 @@ SCENARIOS = {
     end
   end,
 
-  # The hub drives everything. A commit wanting optional + converge gets
-  # each test twice -- once per mode, never both in one run -- and then
-  # nothing is left (exit 3).
+  # The hub picks the commit and its modes, and that's all: a commit
+  # wanting optional + converge gets one of them (never both in one run),
+  # applied to an ordinary whole-suite run in MESA's order. Asking again
+  # doesn't offer that commit: this computer has tested it.
   'best' => lambda do
     Scenario.new('install_and_test best',
                  wants: %w[optional converge], auth: :key,
@@ -331,17 +332,20 @@ SCENARIOS = {
       status, = s.mesa_test('install_and_test', 'best', env: { 'MESA_SKIP_OPTIONAL' => 't' })
       s.check(status.zero?, "install_and_test best exited #{status}")
       runs = tests_logged(s)
-      s.check(runs.size == 2 * TESTS.size, "expected #{2 * TESTS.size} runs, got #{runs}")
+      s.check(runs.map { |l| l.split[1] } == TESTS, "expected #{TESTS} in order, got #{runs}")
+      s.check(runs.map { |l| l.split[2..].join(' ') }.uniq.size == 1, "modes varied by test: #{runs}")
       s.check(runs.none? { |l| l.include?('skip_optional=unset') && !l.include?('res=unset') },
               "a run combined full inlists and converge: #{runs}")
       r = s.report
+      s.check(Scenario.one_build_then_per_test?(r['submissions']), "submissions: #{r['submissions']}")
       s.check(r['claims'].all? { |c| c['status'] == 'fulfilled' }, "claims: #{r['claims']}")
-      s.check(r['satisfied']['optional'] && r['satisfied']['converge'],
-              "requests not satisfied: #{r['satisfied']}")
+      s.check([r['satisfied']['optional'], r['satisfied']['converge']].count(true) == 1,
+              "expected exactly one request satisfied: #{r['satisfied']}")
 
-      status, out = s.mesa_test('request_work', '--scope=test', "--sha=#{s.sha}")
-      s.check(status == NOTHING_TO_DO_EXIT && !out.include?('{'),
-              "request_work with nothing left exited #{status}")
+      # The dev database has other commits to offer, just not this one.
+      status, out = s.mesa_test('request_work')
+      offered = status.zero? ? JSON.parse(out[out.index('{')..])['commit_sha'] : nil
+      s.check(offered != s.sha, 'offered the commit this computer just tested')
     end
   end,
 
@@ -397,9 +401,9 @@ SCENARIOS = {
     end
   end,
 
-  # `install_and_test best --jobs 2`: workers share the dispatch loop
-  # without ever running one test twice at once, and finish the same work
-  # the serial loop does.
+  # `install_and_test best --jobs 2`: the ordinary parallel run, on the
+  # commit and modes the hub picked. No per-test dispatch, so nothing polls
+  # the hub while the last tests finish.
   'parallel-best' => lambda do
     Scenario.new('install_and_test best --jobs 2', wants: %w[optional converge], auth: :key,
                                                    capabilities: %w[full_inlists converge]).run do |s|
@@ -411,16 +415,18 @@ SCENARIOS = {
       s.check(runs.all? { |r| r[:omp] == '4' }, "per-test threads: #{runs.map { |r| r[:omp] }.uniq}")
       s.check(out.include?('2 tests at a time, 4 threads each (OMP_NUM_THREADS=8 ÷ 2)'),
               'no message about the thread split')
-      s.check(runs.size == 2 * TESTS.size, "expected #{2 * TESTS.size} runs, got #{runs.size}")
+      s.check(runs.size == TESTS.size, "expected #{TESTS.size} runs, got #{runs.size}")
       s.check(Scenario.max_overlap(runs) == 2, "max concurrent runs: #{Scenario.max_overlap(runs)}")
+      s.check(!out.include?('nothing more'), "polled the hub for tests:\n#{out}")
       same_test_overlap = runs.group_by { |r| r[:test] }.values.any? { |rs| Scenario.max_overlap(rs) > 1 }
       s.check(!same_test_overlap, 'one test ran twice at the same time')
       s.check(tests_logged(s).none? { |l| l.include?('skip_optional=unset') && !l.include?('res=unset') },
               'a run combined full inlists and converge')
       r = s.report
       s.check(r['claims'].all? { |c| c['status'] == 'fulfilled' }, "claims: #{r['claims']}")
-      s.check(r['runs'].size == 2 * TESTS.size, "hub saw #{r['runs'].size} runs")
-      s.check(r['satisfied']['optional'] && r['satisfied']['converge'], "requests: #{r['satisfied']}")
+      s.check(r['runs'].size == TESTS.size, "hub saw #{r['runs'].size} runs")
+      s.check([r['satisfied']['optional'], r['satisfied']['converge']].count(true) == 1,
+              "requests: #{r['satisfied']}")
     end
   end,
 

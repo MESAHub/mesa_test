@@ -41,7 +41,8 @@ Scenarios:
 | `converge-factor` | `install best` on a `[ci converge 0.5]` commit with the shell at 0.9, then array jobs. Checks: the named factor wins (with warnings) at install and in each job, and the request is met. |
 | `parallel` | `install_and_test SHA --jobs 3 --test-threads 2 --build-threads 4`. Checks: build `NPROCS`/`OMP_NUM_THREADS`, tests overlap with 2 threads each, per-test logs, the build status submitted on its own, then each test claimed and submitted individually. |
 | `parallel-best` | `install_and_test best --jobs 2` with `OMP_NUM_THREADS=8`. Checks: threads split to 4 per test, at most 2 at once, never one test twice at once, all runs submitted, requests met. |
-| `submit-split` | `install SHA`, `test --no-submit` (sends nothing), then a plain `submit`. Checks: the build status plus one submission per test, never one bulk submission. |
+| `install` | `install SHA --no-submit` (nothing claimed or sent), `install` (build claimed, reported, claim fulfilled), and a failed build (reported with `compiled: false`, exit 1). |
+| `submit-split` | `install --no-submit`, `test --no-submit` (nothing claimed or sent), then a plain `submit`: one request, stored by the hub as a build row plus one per test. Repeating `submit` stores nothing new (fingerprints), and results older than the build are skipped. |
 | `nothing` | Runs against a stub hub that always answers "nothing to do" (no testhub needed). Checks: `install best`, `install_and_test best`, and `request_work` exit 3 without creating the work directory or claiming anything. An unreachable hub must fail some other way, so scripts can tell "nothing to do" from "couldn't ask". |
 | `legacy` | Email + password, explicit SHA, whole suite. Checks: the build status is submitted on its own, then each test is claimed as it starts and submitted as it finishes (results roll in, never one bulk submission), and `count` works. |
 

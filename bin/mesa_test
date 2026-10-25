@@ -149,9 +149,8 @@ class MesaTest < Thor
           shell.say 'Submitting results to ' + s.base_uri + '... ', :blue
           s.submit_instance(m, t, force_logs: options['force-logs'])
         else
-          # The build's status goes in first (what a bulk submission used
-          # to carry), then each test as soon as it finishes.
-          s.submit_commit(m, empty: true) if options[:submit]
+          # Each test is claimed as it starts and submitted as it finishes.
+          # (`install` reports the build.)
           run_tests(s, m, mod: options[:module].downcase.to_sym,
                           submit: options[:submit], flags: claim_flags(modes))
         end
@@ -212,23 +211,19 @@ class MesaTest < Thor
         s.submit_instance(m, t, force_logs: options['force-logs'])
         shell.say "Done.\n", :green
       else
-        # The build status, then (unless --empty) each test that has results,
-        # one submission per test -- never a bulk submission.
-        built = begin
+        # The build status plus (unless --empty) every test with results from
+        # this build, in one request. MESATestHub stores it as a build row
+        # plus one row per test and ignores anything it already has (by
+        # fingerprint), so re-running `submit` is safe.
+        begin
           m.check_installation
-          true
         rescue MesaDirError
           shell.say %q{This MESA installation doesn't seem to be compiled } \
             'properly. Attempting to submit a compilation failure to '\
             'MESATestHub.', :red
-          false
+          empty = true
         end
-        s.submit_commit(m, empty: true)
-        if built && !empty
-          tests_for(m, options[:module].downcase.to_sym).select(&:ran?).each do |t|
-            s.submit_instance(m, t, force_logs: options['force-logs'])
-          end
-        end
+        s.submit_commit(m, empty: empty, force_logs: options['force-logs'])
       end
     end
   end
@@ -269,6 +264,10 @@ class MesaTest < Thor
   If no sha is provided, defaults to main (if checkout is occuring). SHA is
   ignored if using option --no-checkout
 
+  The build is claimed and its result (pass or fail, with the build log)
+  reported to MesaTestHub, and a failed build exits with status 1.
+  --no-submit just builds, for local work: nothing is claimed or sent.
+
   Run modes given here (--skip-optional, --fpe, --converge) are used for
   the build and recorded in $MESA_DIR/testhub.yml, so later `mesa_test test`
   runs on this build (e.g. cluster array jobs) apply them automatically.
@@ -288,6 +287,10 @@ class MesaTest < Thor
                     type: :boolean, default: true, aliases: '-c'
   option :mesadir, desc: 'Location of mesa dir, if not relying on config data',
                    type: :string
+  option :submit, desc: 'Report the build (claim it first, then submit its ' \
+                        'status) to MesaTestHub. --no-submit just builds, ' \
+                        'e.g. for local testing.',
+                  type: :boolean, default: true
   claim_option
   run_mode_options
   build_threads_option
@@ -317,11 +320,20 @@ class MesaTest < Thor
             github_protocol: s.github_protocol
           )
         end
-    if options[:claim]
+    if options[:submit] && options[:claim]
       s.claim(sha: m.sha, scope: 'build', flags: claim_flags(modes),
               dispatched_at: rec && rec['dispatched_at'])
     end
-    build_with_modes(m, modes)
+    built = begin
+      build_with_modes(m, modes, raise_on_failure: true)
+      true
+    rescue MesaDirError
+      false
+    end
+    # Report the build either way (a failure carries its build log), like
+    # `test` reports each test.
+    submit_build(s, m) if options[:submit]
+    exit 1 unless built
   end
 
   desc 'install_and_test [SHA]', 'Install, test, and submit an entire commit.'
@@ -414,8 +426,8 @@ class MesaTest < Thor
       build_with_modes(m, modes, raise_on_failure: true)
     rescue MesaDirError
       # Report the failed build (with its log) right away.
-      s.submit_commit(m, empty: true) if options[:submit]
-      return
+      submit_build(s, m) if options[:submit]
+      exit 1
     end
 
     check_mesa(m)
@@ -423,7 +435,7 @@ class MesaTest < Thor
     # The build's status goes in as soon as it's known, then each test as
     # soon as it finishes -- results roll in rather than arriving in one
     # bulk submission at the end.
-    build_submitted = options[:submit] ? s.submit_commit(m, empty: true) : true
+    build_submitted = options[:submit] ? submit_build(s, m) : true
     all_submitted = with_env(run_mode_env(m.recorded_run_modes).merge(test_thread_env)) do
       m.with_mesa_dir do
         run_tests(s, m, mod: options[:module].downcase.to_sym,
@@ -533,8 +545,8 @@ class MesaTest < Thor
     begin
       build_with_modes(m, modes, raise_on_failure: true)
     rescue MesaDirError
-      s.submit_commit(m, empty: true)
-      return
+      submit_build(s, m)
+      exit 1
     end
     check_mesa(m)
     update_mesa(mesa: m, mod: :all)
@@ -648,6 +660,17 @@ class MesaTest < Thor
     raise Thor::Error, '--build-threads must be at least 1.' if n.to_i < 1
 
     { 'NPROCS' => n.to_i.to_s, 'OMP_NUM_THREADS' => n.to_i.to_s }
+  end
+
+  # Report this build's status (and its log, if it failed). Returns whether
+  # the report went through; false if there was nothing to report.
+  def submit_build(s, m)
+    unless m.install_attempted?
+      shell.say 'No build to report (the install never got far enough to ' \
+                'write testhub.yml).', :red
+      return false
+    end
+    s.submit_commit(m, empty: true)
   end
 
   # The loaded tests of +mod+ (or every module), in do1_test_source order.

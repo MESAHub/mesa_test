@@ -33,8 +33,8 @@ see what it would pick:
 
 On a cluster, where the build and the tests are separate jobs:
 
-    mesa_test install best || exit   # exits 3 if nothing needs testing
-    mesa_test submit --empty         # report the build
+    mesa_test install best || exit   # builds and reports the build; exits 3 if
+                                     # nothing needs testing, 1 if the build failed
     # ...then array jobs, one per test:
     mesa_test test $N
 
@@ -65,6 +65,16 @@ Whether serial or parallel, results go to MESATestHub as they happen: the
 build status as soon as the build finishes, then each test as soon as it
 finishes. Each test is claimed just as it starts, so the hub shows exactly
 what's running.
+
+## Reporting
+
+Results go to MESATestHub as they happen. `install` reports the build as
+soon as it finishes, and `test` claims each test as it starts and reports
+it as it finishes. Add `--no-submit` to either for a purely local run
+(nothing claimed, nothing sent). `mesa_test submit` reports everything the
+current build has produced in one request. It's safe to repeat: results
+the hub already has are recognized and ignored, and results left over from
+an earlier build in the same directory are never sent.
 
 ## Run modes
 

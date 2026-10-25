@@ -31,6 +31,10 @@ compiler_version: '15.2.0'
 sdk_version: 'aarch64-macos-26.3.2'
 math_backend: 'CRMATH'
 YML
+if [ -n "$FAKE_INSTALL_FAIL" ]; then
+  echo "fake compile error" > build.log
+  exit 1
+fi
 echo "MESA installation was successful" > build.log
 EOF
 

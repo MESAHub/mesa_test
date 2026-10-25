@@ -90,10 +90,11 @@ MESATestHub can tell a computer what to work on and track what is in flight. The
   - The client never stores claim ids. The server fulfills claims by matching computer, commit, and test when the submission arrives.
   - `install`, `test`, and `install_and_test` claim by default; turn it off with `--no-claim`.
   - **No bulk submissions, and claims are just-in-time** (Oct 2026):
-    - Every run reports its build status as soon as the build finishes (an `empty` submission, with the build log on failure).
+    - **`install` reports its build like `test` reports tests**: claim, build, submit the build status (an `empty` submission, with the build log on failure). It exits 1 on a failed build. `--no-submit` does neither the claim nor the report, so it's the old local-only behavior. `test` no longer sends a build report of its own.
     - Each test is claimed right as it starts and submitted right as it finishes, so results roll in and a claim always means "running now".
-    - This applies to `test` (all tests), `install_and_test`, and plain `submit`, which sends the build status plus one submission per test with results. Never `entire: true`.
-    - The hub still accepts bulk submissions from older clients, and its `all_test_cases` claim endpoint remains, but this client no longer uses either.
+    - **Plain `submit`** sends one request: the build status plus every test with results from *this* build (`submittable_tests` skips `testhub.yml` files older than `build.log`, left in a reused work dir). The hub (Oct 2026+) stores it as a build row plus one row per test; older hubs keep it as one combined row.
+    - **Fingerprints:** every submission carries a top-level `fingerprints` hash (`build` → SHA-256 of `build.log`, `<module>/<test>` → SHA-256 of `testhub.yml`). The hub ignores results it already has, so re-running `submit`, a head node re-sending what compute nodes sent, or `install best` followed by a habitual `submit --empty` all over-report harmlessly. Top-level, not per instance, so an older hub that builds instances straight from their params doesn't reject the request.
+    - The hub's `all_test_cases` claim endpoint remains, but this client no longer uses it.
     - Serial runs loop over tests in mesa_test (`./each_test_run N` via `do_one`, output on the terminal) rather than calling `./each_test_run` once per module, so per-test submission is possible, and Ctrl-C stops the whole run instead of moving on to the next module.
   - Claims carry the run's environment (`MesaTestSubmitter#claim_environment`), which the hub shows on pending tests. Test claims use the build's `testhub.yml` compiler record. Build claims are made before compiling, so they send only the shell's `MESASDK_VERSION`. Both send `OMP_NUM_THREADS` and the config's `platform_version`.
 - **Run modes are recorded in the work dir.**

@@ -293,6 +293,10 @@ SCENARIOS = {
               "test claims' environment: #{tests_env}")
       build_env = r['claims'].find { |c| c['scope'] == 'build' }&.dig('environment')
       s.check(build_env == 'SDK e2e-sdk · 3 threads · linux e2e', "build claim's environment: #{build_env.inspect}")
+      # install best reported the build and `submit --empty` reported it
+      # again; the hub keeps one (same build.log fingerprint).
+      s.check(r['submissions'].count { |sub| sub['empty'] } == 1,
+              "build reports stored: #{r['submissions'].count { |sub| sub['empty'] }}")
       build = r['submissions'].find { |sub| sub['empty'] }
       s.check(build && build['use_fpe'] && build['use_full_inlists'],
               "build submission didn't carry its modes: #{build.inspect}")
@@ -411,17 +415,53 @@ SCENARIOS = {
   # the build status and one submission per test with results.
   'submit-split' => lambda do
     Scenario.new('test --no-submit, then submit (no bulk submission)', wants: [], auth: :key).run do |s|
-      s.mesa_test('install', s.sha, '--no-claim')
+      s.mesa_test('install', s.sha, '--no-submit')
       status, = s.mesa_test('test', '--no-submit')
       s.check(status.zero?, "test --no-submit exited #{status}")
       s.check(tests_logged(s).size == TESTS.size, "runs: #{tests_logged(s)}")
-      s.check(s.report['submissions'].empty?, '--no-submit submitted something')
+      r = s.report
+      s.check(r['submissions'].empty? && r['claims'].empty?, '--no-submit claimed or submitted something')
 
+      # One request; the hub stores a build row plus one row per test.
       status, = s.mesa_test('submit')
       s.check(status.zero?, "submit exited #{status}")
       r = s.report
       s.check(Scenario.one_build_then_per_test?(r['submissions']), "submissions: #{r['submissions']}")
       s.check(r['runs'].size == TESTS.size, "hub saw #{r['runs'].size} runs")
+
+      # Submitting again stores nothing new (fingerprints)...
+      s.mesa_test('submit')
+      s.check(s.report['submissions'].size == 1 + TESTS.size, 'a repeated submit stored duplicates')
+      # ...and results older than the build are never sent.
+      FileUtils.touch(File.join(s.work_dir, 'build.log'))
+      _, out = s.mesa_test('submit')
+      s.check(out.include?("Skipping #{TESTS.size} test results older than this build"),
+              'stale results were not skipped')
+      s.check(s.report['submissions'].size == 1 + TESTS.size, 'stale results were stored')
+    end
+  end,
+
+  # `install` reports its build like `test` reports tests: claim, build,
+  # submit -- or neither with --no-submit. A failed build is reported (with
+  # compiled: false) and exits non-zero.
+  'install' => lambda do
+    Scenario.new('install reports its build; --no-submit and failures', wants: [], auth: :key).run do |s|
+      status, = s.mesa_test('install', s.sha, '--no-submit')
+      r = s.report
+      s.check(status.zero? && r['submissions'].empty? && r['claims'].empty?,
+              "install --no-submit: exit #{status}, #{r['submissions'].size} submissions, #{r['claims'].size} claims")
+
+      status, = s.mesa_test('install', s.sha, '--no-checkout')
+      r = s.report
+      s.check(status.zero?, "install exited #{status}")
+      s.check(r['submissions'].map { |sub| sub.values_at('empty', 'compiled') } == [[true, true]],
+              "build report: #{r['submissions']}")
+      s.check(r['claims'].map { |c| [c['scope'], c['status']] } == [%w[build fulfilled]], "claims: #{r['claims']}")
+
+      status, = s.mesa_test('install', s.sha, '--no-checkout', env: { 'FAKE_INSTALL_FAIL' => '1' })
+      s.check(status == 1, "a failed build exited #{status}, not 1")
+      s.check(s.report['submissions'].map { |sub| sub['compiled'] }.include?(false),
+              'the failed build was not reported')
     end
   end,
 

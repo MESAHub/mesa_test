@@ -8,6 +8,7 @@ require 'net/https'
 require 'thor'
 require 'json'
 require 'base64'
+require 'digest'
 
 MesaDirError = Class.new(StandardError)
 TestCaseDirError = Class.new(StandardError)
@@ -331,28 +332,42 @@ can be revoked on its own, so it is the safer thing to store.'
   # test cases and the test results. These will be encoded as an array of
   # JSON objects.
   def instance_params(mesa)
-    has_errors = []
-    res = []
-    mesa.test_case_names.each do |mod, names|
-      names.each do |test_name|
-        begin
-          test_case = mesa.test_cases[mod][test_name]
-          res << test_case.results_hash
-        rescue TestCaseDirError
-          # shell.say "It appears that #{test_case.test_name} has not been "\
-          #           'run yet. Unable to submit data for this test.', :red
-          has_errors << test_case
+    submittable_tests(mesa).map(&:results_hash)
+  end
+
+  # Tests with results from *this* build: run, readable, and not older than
+  # the build itself. A reused work directory (`install --no-checkout`) can
+  # still hold testhub.yml files from an earlier build; those would be filed
+  # under the wrong commit, so they're skipped (and counted).
+  def submittable_tests(mesa)
+    built_at = mesa.built_at
+    unread = []
+    stale = 0
+    tests = mesa.test_case_names.flat_map do |mod, names|
+      names.filter_map do |test_name|
+        test_case = mesa.test_cases[mod][test_name]
+        next unless test_case&.ran?
+
+        if built_at && File.mtime(test_case.testhub_file) < built_at
+          stale += 1
+          next
         end
+        test_case.results_hash
+        test_case
+      rescue TestCaseDirError, Psych::Exception
+        unread << test_case
+        nil
       end
     end
-    unless has_errors.empty?
-      shell.say "The following test cases could NOT be read for submission:",
-                :red
-      has_errors.each do |test_case|
-        shell.say "- #{test_case.test_name}", :red
-      end
+    if stale.positive?
+      shell.say "Skipping #{stale} test result#{'s' unless stale == 1} older than this " \
+                'build (left over from an earlier one).', :yellow
     end
-    res
+    unless unread.empty?
+      shell.say 'The following test cases could NOT be read for submission:', :red
+      unread.each { |test_case| shell.say "- #{test_case.test_name}", :red }
+    end
+    tests
   end
 
   # The build's recorded run modes in the submissions API's `claim:` block
@@ -456,11 +471,19 @@ can be revoked on its own, so it is the safer thing to store.'
     request_data = {submitter: submitter_params,
                     commit: commit_params(mesa, empty: empty, entire: !empty)}
     request_data[:claim] = run_mode_params(mesa) if mesa.recorded_run_modes.any?
+    # Fingerprints let MESATestHub ignore results it already has (a retried
+    # submit, a head node re-sending what compute nodes sent).
+    fingerprints = {}
+    fingerprints['build'] = mesa.build_fingerprint if mesa.build_fingerprint
     # don't need test instances if it's an empty submission or if compilation
     # failed
+    tests = []
     if !empty && request_data[:commit][:compiled]
-      request_data[:instances] = instance_params(mesa)
+      tests = submittable_tests(mesa)
+      request_data[:instances] = tests.map(&:results_hash)
+      tests.each { |t| fingerprints[t.fingerprint_key] = t.fingerprint }
     end
+    request_data[:fingerprints] = fingerprints unless fingerprints.empty?
     request.body = request_data.to_json
 
     # actually do the submission
@@ -484,15 +507,10 @@ can be revoked on its own, so it is the safer thing to store.'
 
       # compilation succeded, so submit any logs for failing tests
       res = true
-      unless empty
-        mesa.test_cases.each do |mod, test_case_hash|
-          test_case_hash.each do |tc_name, test_case|
-            # get at each individual test case, see if it failed, and if it
-            # did, submit its log files
-            if !test_case.passed? || force_logs
-              res &&= submit_test_log(test_case, skip_passing: !force_logs)
-            end
-          end
+      # logs for the failing tests just submitted (or all, with force_logs)
+      tests.each do |test_case|
+        if !test_case.passed? || force_logs
+          res &&= submit_test_log(test_case, skip_passing: !force_logs)
         end
       end
 
@@ -522,7 +540,8 @@ can be revoked on its own, so it is the safer thing to store.'
     # entire (... there is only test case)
     request_data = {submitter: submitter_params,
                     commit: commit_params(mesa, empty: false, entire: false),
-                    instances: single_instance_params(test_case)}
+                    instances: single_instance_params(test_case),
+                    fingerprints: { test_case.fingerprint_key => test_case.fingerprint }}
     request_data[:claim] = run_mode_params(mesa) if mesa.recorded_run_modes.any?
     request.body = request_data.to_json
 
@@ -1123,6 +1142,18 @@ class Mesa
     )
   end
 
+  # Fingerprint of this build (a hash of build.log), so MESATestHub can
+  # recognize a build report it already has. nil before any build.
+  def build_fingerprint
+    file_fingerprint(File.join(mesa_dir, 'build.log'))
+  end
+
+  # When this build finished (build.log's mtime), or nil.
+  def built_at
+    build_log = File.join(mesa_dir, 'build.log')
+    File.exist?(build_log) ? File.mtime(build_log) : nil
+  end
+
   def install_attempted?
     File.exist? File.join(mesa_dir, 'testhub.yml')
   end
@@ -1329,6 +1360,16 @@ class MesaTestCase
                                  "#{test_name}.")
     end
     YAML.load(File.read(testhub_file))
+  end
+
+  # How MESATestHub keys this test's fingerprint: "<module>/<test>".
+  def fingerprint_key
+    "#{mod}/#{test_name}"
+  end
+
+  # Fingerprint of this run's results (a hash of testhub.yml).
+  def fingerprint
+    file_fingerprint(testhub_file)
   end
 
   # rough proxy for whether or not the test has even been run
@@ -1589,6 +1630,11 @@ def with_env(overrides)
   yield
 ensure
   saved&.each { |k, v| v.nil? ? ENV.delete(k) : ENV[k] = v }
+end
+
+# SHA-256 of a file's contents, or nil if it doesn't exist.
+def file_fingerprint(path)
+  File.exist?(path) ? Digest::SHA256.file(path).hexdigest : nil
 end
 
 # encode the contents of a file as base-64

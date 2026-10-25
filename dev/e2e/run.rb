@@ -47,6 +47,7 @@ class Scenario
       sh!('git', 'clone', '-q', '--mirror', File.join(@dir, 'src'), File.join(@dir, 'mirror'))
       fixture = JSON.parse(rails('dev:client_fixture:setup', 'SHA' => @sha, 'TESTS' => TESTS.join(','),
                                                              'WANTS' => @wants.join(',')))
+      @fixture = fixture
       write_config(fixture)
       yield self
     rescue StandardError => e
@@ -63,13 +64,14 @@ class Scenario
     self
   end
 
-  attr_reader :sha
+  attr_reader :sha, :fixture
 
-  # Run mesa_test; returns [exit status, combined output].
-  def mesa_test(*args, env: {})
+  # Run mesa_test; returns [exit status, combined output]. stdin answers
+  # prompts (the setup wizard).
+  def mesa_test(*args, env: {}, stdin: '')
     cmd = ['ruby', '-I', File.join(REPO, 'lib'), File.join(REPO, 'bin', 'mesa_test'), *args]
     out, status = Open3.capture2e({ 'HOME' => home, 'MESATESTHUB_URL' => URL }.merge(env), *cmd,
-                                  chdir: @dir)
+                                  chdir: @dir, stdin_data: stdin)
     out = utf8(out)
     File.write(File.join(@dir, "mesa_test-#{args.first}.log"), out, mode: 'a')
     [status.exitstatus, out]
@@ -117,6 +119,10 @@ class Scenario
     File.join(@dir, 'work')
   end
 
+  def config
+    YAML.safe_load(File.read(File.join(home, '.mesa_test', 'config.yml')), permitted_classes: [Symbol])
+  end
+
   def run_modes_in_testhub_yml
     YAML.safe_load(File.read(File.join(@dir, 'work', 'testhub.yml')))['mesa_test_run_modes']
   end
@@ -134,14 +140,14 @@ class Scenario
   def write_config(fixture)
     FileUtils.mkdir_p(File.join(home, '.mesa_test'))
     config = {
-      'computer_name' => fixture['computer'], 'email' => fixture['email'],
-      'password' => @auth == :password ? fixture['password'] : '',
+      'computer_name' => fixture['computer'],
       'api_key' => @auth == :key ? fixture['api_key'] : nil,
       'capabilities' => @capabilities, 'logs_token' => nil,
       'github_protocol' => :https,
       'mesa_mirror' => File.join(@dir, 'mirror'), 'mesa_work' => File.join(@dir, 'work'),
       'platform' => 'linux', 'platform_version' => 'e2e'
     }
+    config.merge!('email' => fixture['email'], 'password' => fixture['password']) if @auth == :password
     File.write(File.join(home, '.mesa_test', 'config.yml'), config.to_yaml)
   end
 
@@ -223,7 +229,7 @@ def standalone_mesa_test(dir, url, *args)
   home = File.join(dir, 'home')
   FileUtils.mkdir_p(File.join(home, '.mesa_test'))
   File.write(File.join(home, '.mesa_test', 'config.yml'), {
-    'computer_name' => 'stub-box', 'email' => '', 'password' => '',
+    'computer_name' => 'stub-box',
     'api_key' => 'mth_stub', 'capabilities' => [], 'logs_token' => nil,
     'github_protocol' => :https, 'mesa_mirror' => File.join(dir, 'mirror'),
     'mesa_work' => File.join(dir, 'work'), 'platform' => 'linux', 'platform_version' => 'e2e'
@@ -524,13 +530,24 @@ SCENARIOS = {
     check
   end,
 
-  # Whole-suite run with email + password and an explicit SHA: the build
-  # status goes in on its own, then each test is claimed as it starts and
-  # submitted as it finishes (no bulk submission).
-  'legacy' => lambda do
-    Scenario.new('install_and_test SHA with email + password', wants: [], auth: :password).run do |s|
+  # A config from mesa_test 1.2 (email + password, no key) is refused before
+  # anything is checked out, with instructions; MESATESTHUB_API_KEY then
+  # works without touching the config. With it, a serial whole-suite run
+  # with an explicit SHA: the build status goes in on its own, then each test
+  # is claimed as it starts and submitted as it finishes.
+  'no-key' => lambda do
+    Scenario.new('old password config refused; key from the environment', wants: [], auth: :password).run do |s|
+      %w[install_and_test count].each do |cmd|
+        status, out = s.mesa_test(cmd, cmd == 'count' ? 'computer: client-fixture' : s.sha)
+        s.check(status == 1 && out.include?('No MESATestHub API key') && out.include?('Generate key'),
+                "#{cmd} without a key exited #{status}:\n#{out}")
+      end
+      s.check(!Dir.exist?(s.work_dir), 'checked out before refusing for want of a key')
+      s.check(s.report['claims'].empty?, 'claimed without a key')
+
+      key = { 'MESATESTHUB_API_KEY' => s.fixture['api_key'] }
       status, out = s.mesa_test('install_and_test', s.sha, '--no-skip-optional',
-                                env: { 'MESA_SKIP_OPTIONAL' => 't' })
+                                env: key.merge('MESA_SKIP_OPTIONAL' => 't'))
       s.check(status.zero?, "install_and_test exited #{status}")
       # Results roll in: the first test is submitted before the last starts.
       first_submit = out.index('Successfully submitted instance')
@@ -545,9 +562,27 @@ SCENARIOS = {
       s.check(r['claims'].size == 1 + TESTS.size && r['claims'].all? { |c| c['status'] == 'fulfilled' },
               "claims: #{r['claims']}")
 
-      status, out = s.mesa_test('count', 'computer: client-fixture')
+      status, out = s.mesa_test('count', 'computer: client-fixture', env: key)
       s.check(status.zero? && JSON.parse(out.lines.last)['count'] == TESTS.size,
-              "count over password auth: #{out.lines.last}")
+              "count with a key: #{out.lines.last}")
+    end
+  end,
+
+  # The wizard: a wrong key is refused and asked for again; the right one
+  # names the computer. Re-running setup over an old config drops the stored
+  # password.
+  'setup' => lambda do
+    Scenario.new('setup wizard', wants: [], auth: :password).run do |s|
+      answers = ['mth_not_a_real_key', s.fixture['api_key'], 'fpe, converge', '', 'https',
+                 '', '', '', '', 'y'].join("\n") + "\n"
+      status, out = s.mesa_test('setup', stdin: answers)
+      c = s.config
+      s.check(status.zero?, "setup exited #{status}:\n#{out}")
+      s.check(out.include?('API key is not valid'), "a bad key wasn't refused:\n#{out}")
+      s.check(out.include?("this computer is #{s.fixture['computer']}"), "computer not named:\n#{out}")
+      s.check(c['api_key'] == s.fixture['api_key'] && c['computer_name'] == s.fixture['computer'] &&
+              c['capabilities'] == %w[fpe converge], "config: #{c}")
+      s.check(!c.key?('password') && !c.key?('email'), "old credentials kept: #{c.keys}")
     end
   end
 }.freeze

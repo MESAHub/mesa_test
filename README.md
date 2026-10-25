@@ -15,10 +15,21 @@ For an individual command, call `help` with an argument:
 
 ## Authenticating
 
-Generate an API key for your computer on its page on
-[MESATestHub](https://testhub.mesastar.org), then run `mesa_test setup` and
-paste it when asked (or export `MESATESTHUB_API_KEY`). Email and password
-still work if you'd rather not use a key.
+mesa_test needs an API key for your computer. Log in to
+[MESATestHub](https://testhub.mesastar.org), open **My Computers**, open the
+computer's page (add it first if needed), and click **Generate key**. Then
+run `mesa_test setup` and paste it when asked. The wizard checks the key and
+fills in the computer's name from it. Alternatively, export
+`MESATESTHUB_API_KEY`, which overrides the config file and keeps the key off
+disk (handy on clusters).
+
+Since version 1.3, mesa_test no longer signs in with your email and password.
+If you're upgrading, run `mesa_test setup` once: it keeps your other
+settings, asks for the key and the optional test modes this computer will
+run, and drops the stored password from `~/.mesa_test/config.yml`.
+
+For `search` and `count` on a machine that never submits, any of your
+computers' keys works.
 
 ## Letting MESATestHub choose what to test
 

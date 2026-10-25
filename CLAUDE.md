@@ -136,13 +136,15 @@ MESATestHub can tell a computer what to work on and track what is in flight. The
 Two different servers are involved:
 
 1. **MESATestHub** — JSON API. URI selected by `MesaTestSubmitter::DEFAULT_URI` = `https://testhub.mesastar.org`.
-   - **Auth, preferred:** a per-computer **API key** (config `api_key`, or `MESATESTHUB_API_KEY` in the environment, which wins) sent as `Authorization: Bearer mth_…` on every request, via `MesaTestSubmitter#testhub_headers`.
-     - With a key, email and password are never sent. The `submitter` block carries just `computer` + `platform_version`.
-     - An unknown or revoked key gets 401 `{"error":"Invalid API key."}`. The server never falls back to the password.
-     - Keys are generated on the computer's page on MESATestHub.
-   - **Auth, legacy:** email + password, still fully supported and used whenever no key is configured.
-   - **Submission flow** — `POST /check_computer.json`, `POST /submissions/create.json`, `POST /api/v1/dispatch`, `POST /api/v1/claims`. With password auth, credentials go in a `submitter` object (`email` + `password` + `computer` + `platform_version`) in the JSON request body, alongside commit/instance payload.
-   - **Search flow** — `GET /test_instances/search.json`, `GET /test_instances/search_count.json`. With password auth, credentials are `email` and `password` *query parameters* (HTTPS-only); the search itself rides in `query_text`. Successful responses are `{"results": [...], "failures": [...]}` where `failures` lists query clauses the server's parser rejected. Always surface `failures` to the user — a typo in a key silently drops the clause, so the CLI echoes it to STDERR. Bad creds come back as HTTP 422 with `{"error":"Invalid e-mail or password."}`.
+   - **Auth: a per-computer API key, required since 1.3.** Config `api_key`, or `MESATESTHUB_API_KEY` in the environment, which wins. Sent as `Authorization: Bearer mth_…` on every request, via `MesaTestSubmitter#testhub_headers`.
+     - The client no longer knows email or password at all: they're neither asked for, stored, nor sent, and re-running `setup` drops them from an old config. The hub still accepts them, so 1.2.x clients keep working.
+     - Every command that talks to the hub calls `require_api_key!` first (via `create_submitter(hub: true)`), before any checkout or build, and fails with `API_KEY_HELP`, which explains how to get a key.
+     - The setup wizard asks for the key first and checks it with `check_computer`, which answers with the key's computer name, so the wizard doesn't ask for the name. It asks for the name only if the hub can't be reached.
+     - The `submitter` block carries just `computer` + `platform_version`. The name is a cross-check: the hub refuses a key that belongs to another computer.
+     - An unknown or revoked key gets 401 `{"error":"Invalid API key."}`.
+     - Keys are generated on the computer's page on MESATestHub. Search is user-scoped, so any of the user's computers' keys works for `search`/`count`.
+   - **Submission flow** — `POST /check_computer.json`, `POST /submissions/create.json`, `POST /api/v1/dispatch`, `POST /api/v1/claims`.
+   - **Search flow** — `GET /test_instances/search.json`, `GET /test_instances/search_count.json`. The search rides in `query_text`. Successful responses are `{"results": [...], "failures": [...]}` where `failures` lists query clauses the server's parser rejected. Always surface `failures` to the user — a typo in a key silently drops the clause, so the CLI echoes it to STDERR. A bad key comes back as HTTP 401, and the CLI adds instructions for getting a key.
 2. **Logs server** — `https://mesa-logs.flatironinstitute.org/uploads`. Receives base64-encoded `build.log`, `mk.txt`, `out.txt`, `err.txt` from failing builds/tests. Auth via `X-Api-Key` header using `logs_token` from config (contact Philip Mocz for a key). URL is hardcoded in `MesaTestSubmitter#submit_logs`.
 
 ## The `MODE` switch — important before release
@@ -182,6 +184,6 @@ Otherwise there is no automated test suite. Validation is manual: flip `MODE` to
 - The library uses bare `bash_execute` / `bashticks` helpers (bottom of [lib/mesa_test.rb](lib/mesa_test.rb)) to force commands through `bash -c`, because MESA's build scripts assume bash.
 - `Mesa#with_mesa_dir` temporarily mutates `ENV['MESA_DIR']` around a block and restores it — this is how the gem isolates MESA installs from the user's own `MESA_DIR`.
 - Config is YAML at `~/.mesa_test/config.yml` (note the directory, not a dotfile in `$HOME` directly). `MesaTestSubmitter::new_from_config` runs the setup wizard automatically if the file is missing.
-- Passwords, API keys, and the logs API token are stored in plaintext in the config file. This is documented to the user in the setup wizard. The per-computer API key *is* the plan for credential storage: it can only submit for one computer, can't log into the website, and can be revoked on its own. Cluster jobs can use `MESATESTHUB_API_KEY` to keep it off disk entirely.
+- The API key and the logs API token are stored in plaintext in the config file, which `save_computer_data` makes owner-only (0600). This is documented to the user in the setup wizard. That's why the client takes a per-computer key and not the password: a key can only act as one computer, can't log into the website, and can be revoked on its own. Cluster jobs can use `MESATESTHUB_API_KEY` to keep it off disk entirely.
 - `Mesa#compiler_hash` symbolizes `testhub.yml`'s keys before merging over its symbol-keyed defaults. Without that, the commit payload carried duplicate `compiler`/`sdk_version`/... keys. json 2.x quietly serialized both (the server kept the last); json 3.x raises.
 - GitHub access protocol (`:ssh` vs `:https`) is per-user config and affects how the mirror is cloned.

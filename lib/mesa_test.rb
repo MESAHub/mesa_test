@@ -16,6 +16,26 @@ InvalidDataType = Class.new(StandardError)
 GitHubError = Class.new(StandardError)
 TestHubError = Class.new(StandardError)
 
+# Output conventions (CLAUDE.md, "Output"): a bold step heading after one
+# blank line for each phase; green when MESA work succeeded (a build, a
+# passing test, a standalone submission), red when something failed, yellow
+# for a warning (the run continues, but you may want to act), blue only for
+# setup-wizard questions; everything else plain. No color for plumbing.
+def say_step(shell, text)
+  shell.say ''
+  shell.say text, :bold
+end
+
+def short_sha(sha)
+  sha.to_s[0, 7]
+end
+
+# A warning on STDERR (so `request_work`'s JSON stays clean), yellow on a
+# terminal.
+def warn_yellow(text)
+  $stderr.puts($stderr.tty? ? "\e[33m#{text}\e[0m" : text)
+end
+
 GITHUB_HTTPS = 'https://github.com/MESAHub/mesa.git'.freeze
 GITHUB_SSH = 'git@github.com:MESAHub/mesa.git'.freeze
 
@@ -36,9 +56,9 @@ class MesaTestSubmitter
   def setup
     update do |s|
       shell.say <<~INTRO
-        This wizard sets up this computer's profile for MESATestHub. Current
-        values are shown in parentheses; press enter to keep them. You can
-        confirm everything at the end.
+        This wizard sets up this computer's profile for MESATestHub. Each
+        question shows the current value; press enter to keep it. You can
+        review everything at the end.
 
         #{API_KEY_HELP}
         (MESATESTHUB_API_KEY, if set, overrides the key saved here.) The key
@@ -64,6 +84,7 @@ class MesaTestSubmitter
       s.logs_token = response unless response.empty?
 
       # Determine if we'll use ssh or https to access github
+      shell.say ''
       shell.say 'When accessing GitHub, which protocol do you want to use?', :blue
       response = shell.ask '>', limited_to: %w[ssh https], default: s.github_protocol.to_s
       s.github_protocol = response.strip.downcase.to_sym
@@ -85,7 +106,7 @@ class MesaTestSubmitter
     if confirm_computer_data
       save_computer_data
     else
-      shell.say "Restarting wizard.\n"
+      shell.say 'Starting over.'
       setup
     end
   end
@@ -97,6 +118,7 @@ class MesaTestSubmitter
   # colored prompt garbles at the terminal's edge (the start of the line
   # repeats before it wraps).
   def question(text, current = nil)
+    shell.say ''
     shell.say(current.to_s.empty? ? text : "#{text} (current: #{current})", :blue)
     shell.ask('>').to_s.strip
   end
@@ -240,21 +262,20 @@ class MesaTestSubmitter
   end
 
   def confirm_computer_data
-    puts "This computer's mesa_test settings:"
-    puts '-------------------------------------------------------'
-    puts "Computer Name           #{computer_name}"
-    puts "API key                 #{masked_api_key || 'none'}"
-    puts "Optional test modes     #{capabilities.select { |_, on| on }.keys.join(', ').then { |c| c.empty? ? 'none' : c }}"
-    puts "logs API token          #{logs_token}"
-    puts "GitHub Protocol         #{github_protocol}"
-    puts "MESA Mirror Location    #{mesa_mirror}"
-    puts "MESA Work Location      #{mesa_work}"
-    puts "OS (detected each run)  #{platform_version}"
-    # puts "Config location         #{config_file}"
-    puts '-------------------------------------------------------'
-    puts ''
-    response = shell.ask 'Is this correct? (y/Y = Yes, anything else = No):'
-    response.strip.casecmp('y').zero?
+    modes = capabilities.select { |_, on| on }.keys.join(', ')
+    say_step(shell, "This computer's settings")
+    [['Computer', computer_name],
+     ['API key', masked_api_key || 'none'],
+     ['Optional test modes', modes.empty? ? 'none' : modes],
+     ['Logs token', logs_token.to_s.empty? ? 'none' : logs_token],
+     ['GitHub protocol', github_protocol],
+     ['MESA mirror', mesa_mirror],
+     ['Work directory', mesa_work],
+     ['OS (detected)', platform_version]].each do |label, value|
+      shell.say format('  %-20s %s', label, value)
+    end
+    shell.say ''
+    shell.ask('Save these settings? [y/N]').to_s.strip.casecmp('y').zero?
   end
 
   def save_computer_data
@@ -402,8 +423,8 @@ class MesaTestSubmitter
                 'build (left over from an earlier one).', :yellow
     end
     unless unread.empty?
-      shell.say 'The following test cases could NOT be read for submission:', :red
-      unread.each { |test_case| shell.say "- #{test_case.test_name}", :red }
+      shell.say "Couldn't read the results of #{unread.map(&:test_name).join(', ')}; " \
+                'not submitting them.', :red
     end
     tests
   end
@@ -530,39 +551,39 @@ class MesaTestSubmitter
       # network failure; testhub_request already explained why
       false
     elsif !response.is_a? Net::HTTPCreated
-      shell.say "\nFailed to submit some or all test case instances and/or "\
-                "commit data (server responded #{response.code} "\
-                "#{response.message}).", :red
+      shell.say "MESATestHub refused the results for #{short_sha(mesa.sha)} " \
+                "(HTTP #{response.code}: #{error_message(response)}).", :red
       false
     else
-      shell.say "\nSuccessfully submitted commit #{mesa.sha}.", :green
-      # commit submitted to testhub, now submit build log if compilation failed
-      # and exit
+      if !mesa.installed?
+        shell.say "Reported the failed build of #{short_sha(mesa.sha)} to MESATestHub."
+      elsif empty || tests.empty?
+        shell.say "Reported the build of #{short_sha(mesa.sha)} to MESATestHub."
+      else
+        shell.say "Submitted the build and #{tests.size} test result#{'s' unless tests.size == 1} " \
+                  "for #{short_sha(mesa.sha)}.", :green
+      end
+      # Upload the build log if compilation failed. A logs-server problem is
+      # only a warning: the results are already in.
       unless mesa.installed?
-        return submit_build_log(mesa)
+        submit_build_log(mesa)
+        return true
       end
 
-      # compilation succeded, so submit any logs for failing tests
-      res = true
       # logs for the failing tests just submitted (or all, with force_logs)
       tests.each do |test_case|
-        if !test_case.passed? || force_logs
-          # (not `res &&= submit_test_log(...)`: after one failed upload that
-          # would skip every remaining test's logs)
-          sent = submit_test_log(test_case, skip_passing: !force_logs)
-          res &&= sent
-        end
+        submit_test_log(test_case, skip_passing: !force_logs) if !test_case.passed? || force_logs
       end
-
-      # a true return value means that any and all log submission were
-      # successful
-      res
+      true
     end
   end
 
   # submit results for a single test case instance. Does *not* report overall
-  # compilation status to testhub. Use an empty commit submission for that
-  def submit_instance(mesa, test_case, force_logs: false)
+  # compilation status to testhub. Use an empty commit submission for that.
+  # +quiet+ leaves the success line to the caller (a test run's progress
+  # line says "submitted"). Returns whether the result went in; a log
+  # upload problem is only a warning.
+  def submit_instance(mesa, test_case, force_logs: false, quiet: false)
     unless mesa.install_attempted?
       raise MesaDirError, 'No testhub.yml file found in installation; '\
                           'must attempt to install before subitting.'
@@ -592,17 +613,13 @@ class MesaTestSubmitter
       # network failure; testhub_request already explained why
       return false
     elsif !response.is_a? Net::HTTPCreated
-      shell.say "\nFailed to submit #{test_case.test_name} for commit "\
-                "#{mesa.sha} (server responded #{response.code} "\
-                "#{response.message}).", :red
+      shell.say "MESATestHub refused #{test_case.mod}/#{test_case.test_name} " \
+                "(HTTP #{response.code}: #{error_message(response)}).", :red
       return false
     else
-      shell.say "\nSuccessfully submitted instance of #{test_case.test_name} "\
-                "for commit #{mesa.sha}.", :green
+      shell.say "Submitted #{test_case.mod}/#{test_case.test_name}.", :green unless quiet
       # submit logs if test failed
-      if !test_case.passed? || force_logs
-        return submit_test_log(test_case, skip_passing: !force_logs)
-      end
+      submit_test_log(test_case, skip_passing: !force_logs) if !test_case.passed? || force_logs
       true
     end
   end
@@ -618,8 +635,7 @@ class MesaTestSubmitter
     https.read_timeout = 60
     https.request(request)
   rescue StandardError => e
-    shell.say "\nCould not reach the test hub at #{https.address} "\
-              "(#{e.class}: #{e.message}).", :red
+    shell.say "Could not reach MESATestHub at #{https.address} (#{e.class}: #{e.message}).", :red
     nil
   end
 
@@ -646,9 +662,8 @@ class MesaTestSubmitter
     begin
       https.request(req)
     rescue StandardError => e
-      shell.say "\nCould not reach the LOGS server at #{uri.host} "\
-                "(#{e.class}: #{e.message}). Skipping log upload; this does "\
-                'not affect test results already sent to the test hub.', :yellow
+      shell.say "Could not reach the logs server at #{uri.host} (#{e.class}: #{e.message}); " \
+                'skipping the log upload. The results themselves are in.', :yellow
       nil
     end
   end
@@ -658,12 +673,7 @@ class MesaTestSubmitter
     # intercept and don't send if mesa was properly installed
     return true if mesa.installed?
 
-    # don't even try unless we have a logs token set
-    unless logs_token
-      shell.say 'Cannot submit to logs server; need to set mesa_logs_token '\
-                'in the mesa_test config file.'
-      return false
-    end
+    return false unless logs_token?
 
     # do submission
     res = submit_logs(build_log_params(mesa))
@@ -673,13 +683,10 @@ class MesaTestSubmitter
       # network failure; submit_logs already explained why. Don't fail the run.
       false
     elsif !res.is_a? Net::HTTPOK
-      shell.say "\nFailed to submit build.log to the LOGS server for commit "\
-                "#{mesa.sha} (server responded #{res.code} #{res.message}).",
-                :red
+      shell.say "The logs server refused the build log (HTTP #{res.code} #{res.message}).", :yellow
       false
     else
-      shell.say "\nSuccessfully submitted build.log to the LOGS server for "\
-                "#{mesa.sha}.", :green
+      shell.say 'Uploaded the build log to the logs server.'
       true
     end
   end
@@ -692,13 +699,8 @@ class MesaTestSubmitter
       return true
     end
 
-    # don't even try unless we have a logs token set
-    unless logs_token
-      shell.say 'Cannot submit to logs server; need to set mesa_logs_token '\
-                'in the mesa_test config file..'
-      return false
-    end
-  
+    return false unless logs_token?
+
     # do submission
     res = submit_logs(test_log_params(test_case))
 
@@ -707,16 +709,25 @@ class MesaTestSubmitter
       # network failure; submit_logs already explained why. Don't fail the run.
       false
     elsif !res.is_a? Net::HTTPOK
-      shell.say "Failed to submit logs for test case #{test_case.test_name} "\
-                "in commit #{test_case.mesa.sha} (server responded "\
-                "#{res.code} #{res.message}).", :red
+      shell.say "The logs server refused the logs for #{test_case.test_name} " \
+                "(HTTP #{res.code} #{res.message}).", :yellow
       false
     else
-      shell.say "Successfully submitted logs for test case "\
-                "#{test_case.test_name} in commit #{test_case.mesa.sha}.",
-                :green
+      shell.say "Uploaded the logs for #{test_case.test_name} to the logs server."
       true
     end
+  end
+
+  # Whether failure logs can be uploaded; says why not once per run.
+  def logs_token?
+    return true if logs_token && !logs_token.to_s.empty?
+
+    unless @warned_no_logs_token
+      shell.say 'No logs token is set, so failure logs are not being uploaded ' \
+                '(add one with `mesa_test setup`).', :yellow
+      @warned_no_logs_token = true
+    end
+    false
   end
 
   # GET a search query from the testhub. The query rides in the URL's
@@ -881,35 +892,29 @@ class Mesa
   end
 
   def checkout(new_sha: 'HEAD')
+    # A branch name is worth showing; a SHA is shown with its subject below.
+    say_step(shell, new_sha =~ /\A\h{40}\z/ ? 'Checking out MESA' : "Checking out #{new_sha}")
     # before anything confirm that git-lfs has been installed
-    shell.say "\nEnsuring that git-lfs is installed... ", :blue
     command = 'git lfs help >> /dev/null 2>&1'
-    if bash_execute(command)
-      shell.say "yes", :green
-    else
-      shell.say "no", :red
-      raise(GitHubError, "The command #{command} returned with an error "\
-                         'status, indicating that git-lfs is not installed. '\
-                         'Make sure it is installed and try again.')
+    unless bash_execute(command)
+      raise(GitHubError, 'git-lfs is not installed (`git lfs help` failed); ' \
+                         'MESA needs it. Install it and try again.')
     end
 
     # set up mirror if it doesn't exist
     unless dir_or_symlink_exists?(mirror_dir)
-      shell.say "\nCreating initial mirror at #{mirror_dir}. "\
-                'This might take awhile...', :blue
+      shell.say "Creating a mirror of MESA in #{mirror_dir} (first time only; " \
+                'this can take a while).'
       FileUtils.mkdir_p mirror_dir
       case github_protocol
       when :ssh
         command = "git clone --mirror #{GITHUB_SSH} #{mirror_dir}"
-        shell.say command
         # fail loudly if this doesn't work
         unless bash_execute(command)
           # nuke the mirror directory since it is probably bogus (make this
           # code fire off the next time checkout is done)
-          shell.say "Failed. Removing the [potentially corrupted] mirror.", :red
-          command = "rm -rf #{mirror_dir}"
-          shell.say command
-          bash_execute(command)
+          shell.say 'Cloning failed; removing the partial mirror.', :red
+          bash_execute("rm -rf #{mirror_dir}")
 
           raise(GitHubError, 'Error while executing the following command:'\
                              "#{command}. Perhaps you haven't set up "\
@@ -917,15 +922,12 @@ class Mesa
         end
       when :https
         command = "git clone --mirror #{GITHUB_HTTPS} #{mirror_dir}"
-        shell.say command
         # fail loudly if this doesn't work
         unless bash_execute(command)
           # nuke the mirror directory since it is probably bogus (make this
           # code fire off the next time checkout is done)
-          shell.say "Failed. Removing the [potentially corrupted] mirror.", :red
-          command = "rm -rf #{mirror_dir}"
-          shell.say command
-          bash_execute(command)
+          shell.say 'Cloning failed; removing the partial mirror.', :red
+          bash_execute("rm -rf #{mirror_dir}")
 
           raise(GitHubError, 'Error while executing the following command: '\
                              "#{command}. Perhaps you need to configure "\
@@ -943,20 +945,19 @@ class Mesa
     update_mirror
 
     # create "work" directory with proper commit
-    shell.say "\nSetting up worktree repo...", :blue
     FileUtils.mkdir_p mesa_dir
-    command = "git -C #{mirror_dir} worktree add #{mesa_dir} #{new_sha}"
-    shell.say command
-    return if bash_execute(command)
+    command = "git -C #{mirror_dir} worktree add --quiet #{mesa_dir} #{new_sha}"
+    if bash_execute(command)
+      shell.say "#{bashticks("git -C #{mesa_dir} log -1 --format='%h %s'")} (in #{mesa_dir})"
+      return
+    end
 
     raise(GitHubError, 'Failed while executing the following command: '\
                        "\"#{command}\".")
   end
 
   def update_mirror
-    shell.say "\nFetching MESA history...", :blue
-    command = "git -C #{mirror_dir} fetch origin --prune"
-    shell.say command
+    command = "git -C #{mirror_dir} fetch origin --prune --quiet"
     # fail loudly
     return if bash_execute(command)
 
@@ -966,15 +967,11 @@ class Mesa
 
   def remove
     return unless File.exist? mesa_dir
-    shell.say "\nRemoving work directory from worktree (clearing old data)...",
-              :blue
     command = "git -C #{mirror_dir} worktree remove --force #{mesa_dir}"
-    shell.say command
     return if bash_execute(command)
 
-    shell.say "Failed. Simply trying to remove the directory.", :red
+    # Not a worktree of this mirror (or git refused): just delete it.
     command = "rm -rf #{mesa_dir}"
-    shell.say command
     # fail loudly (the "true" tells bash_execute to raise an exception if
     # the command fails)
     bash_execute(command, true)
@@ -992,8 +989,6 @@ class Mesa
     with_mesa_dir do
       visit_and_check mesa_dir, MesaDirError, 'E\countered a problem in ' \
                                 "running `clean` in #{mesa_dir}." do
-        shell.say('MESA_DIR = ' + ENV['MESA_DIR'])
-        shell.say './clean'
         bash_execute('./clean')
       end
     end
@@ -1004,8 +999,6 @@ class Mesa
     with_mesa_dir do
       visit_and_check mesa_dir, MesaDirError, 'Encountered a problem in ' \
                                 "running `install` in #{mesa_dir}." do
-        shell.say('MESA_DIR = ' + ENV['MESA_DIR'])
-        shell.say './install'
         bash_execute('./install')
       end
     end
@@ -1119,7 +1112,7 @@ class Mesa
       @names_to_numbers[mod] = {}
       @test_case_names[mod] = []
       @test_cases[mod] = {}
-      visit_dir(test_suite_dir(mod: mod), quiet: true) do
+      visit_dir(test_suite_dir(mod: mod)) do
         bashticks('./list_tests').split("\n").each do |line|
           num, tc_name = line.strip.split
           @names_to_numbers[mod][tc_name.strip] = num.to_i
@@ -1132,7 +1125,7 @@ class Mesa
               mesa: self
             )
           rescue TestCaseDirError
-            shell.say "No such test case #{tc_name.strip}. Skipping loading it.", :red
+            shell.say "do1_test_source lists #{tc_name.strip}, but it has no directory; skipping it.", :yellow
           end
         end
       end
@@ -1201,15 +1194,13 @@ class Mesa
     # change MESA_DIR, holding on to old value
     orig_mesa_dir = ENV['MESA_DIR']
     ENV['MESA_DIR'] = mesa_dir
-    shell.say "Temporarily changed MESA_DIR to #{ENV['MESA_DIR']}.", :blue
-  
+
     # do the stuff
     begin
       yield
     # make sure we undo MESA_DIR change
     ensure
       ENV['MESA_DIR'] = orig_mesa_dir
-      shell.say "Changed MESA_DIR back to #{ENV['MESA_DIR']}.", :blue
     end
   end
 
@@ -1385,7 +1376,6 @@ class MesaTestCase
   # just punt to +each_test_run+ in the test_suite directory. It's your problem
   # now, sucker!
   def do_one
-    shell.say("Testing #{test_name}", :yellow)
     visit_dir(test_suite_dir) do
       bash_execute("./each_test_run #{position}")
     end
@@ -1483,12 +1473,8 @@ end
 # exception if the block failed (returned false or nil)
 def visit_and_check(new_dir, exception, message)
   cwd = Dir.getwd
-  shell.say "Leaving  #{cwd}", :blue
-  shell.say "\nEntering #{new_dir}.", :blue
   Dir.chdir(new_dir)
   success = yield if block_given?
-  shell.say "Leaving  #{new_dir}", :blue
-  shell.say "\nEntering #{cwd}.", :blue
   Dir.chdir(cwd)
   return if success
   raise exception, message
@@ -1496,19 +1482,15 @@ end
 
 # cd into a new directory, execute a block, then cd back into original
 # directory
-def visit_dir(new_dir, quiet: false)
+def visit_dir(new_dir)
   cwd = Dir.getwd
-  shell.say "Leaving  #{cwd}\n", :blue unless quiet
-  shell.say "\nEntering #{new_dir}.", :blue unless quiet
   Dir.chdir(new_dir)
   yield if block_given?
-  shell.say "Leaving  #{new_dir}\n", :blue unless quiet
-  shell.say "\nRe-entering #{cwd}.", :blue unless quiet
   Dir.chdir(cwd)
 end
 
 # the next function probalby doesn't belong here, but keep it anyway, please
-# create seed data for test cases for MesaTestHub of a given mesa version
+# create seed data for test cases for MESATestHub of a given mesa version
 def generate_seeds_rb(mesa_dir, outfile)
   m = Mesa.new(mesa_dir: mesa_dir)
   m.load_test_source_data
@@ -1607,8 +1589,8 @@ def dispatch_run_modes(rec, preferred: nil, preferred_source: nil)
     if requested
       factor = requested.to_s
       if preferred && preferred.to_f != requested.to_f
-        warn "MESATestHub asked for resolution factor #{factor} ([ci converge #{factor}]); " \
-             "using it instead of your #{preferred_source}=#{preferred}."
+        warn_yellow "MESATestHub asked for resolution factor #{factor} ([ci converge #{factor}]); " \
+                    "using it instead of your #{preferred_source}=#{preferred}."
       end
       modes[:resolution_factor] = factor
     else

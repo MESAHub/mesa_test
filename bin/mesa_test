@@ -21,7 +21,7 @@ class MesaTest < Thor
   DEVELOPMENT_URI = 'http://localhost:3000'.freeze
   STAGING_URI = 'https://beta-testhub.herokuapp.com'.freeze
 
-  # Exit status when MesaTestHub has nothing for this computer to do, so a
+  # Exit status when MESATestHub has nothing for this computer to do, so a
   # script can stop instead of re-testing whatever is already in the work
   # directory:  mesa_test install best || exit
   NOTHING_TO_DO_EXIT = 3
@@ -32,7 +32,7 @@ class MesaTest < Thor
 
   # --claim / --no-claim, shared by every command that starts work.
   def self.claim_option
-    option :claim, desc: 'Tell MesaTestHub this computer is working on the ' \
+    option :claim, desc: 'Tell MESATestHub this computer is working on the ' \
                          'commit (and its tests) so it shows as pending, not ' \
                          'untested. Use --no-claim if something else already ' \
                          'claimed it.',
@@ -90,7 +90,7 @@ class MesaTest < Thor
 
     #{MesaTestCase.modules.map { |mod| '    ' + mod.to_s }.join(', ')}
 
-    Each test is claimed on MesaTestHub as it starts, so it shows as pending,
+    Each test is claimed on MESATestHub as it starts, so it shows as pending,
     and its result is submitted as soon as it finishes. This needs an API key
     (see `mesa_test help setup`). --no-submit runs tests locally only:
     nothing is claimed or sent, and no key is needed.
@@ -109,7 +109,7 @@ class MesaTest < Thor
                  type: :boolean, default: true, aliases: '-f'
   option 'force-logs', desc: 'Submit logs for test case(s), even if they pass',
                        type: :boolean, default: false
-  option :submit, desc: 'Submit results (if any) to MesaTestHub.',
+  option :submit, desc: 'Submit results (if any) to MESATestHub.',
                   type: :boolean, default: true
   option :module, desc: 'Which module to test and/or submit, if applicable.',
                   type: :string, default: 'all', aliases: '-m'
@@ -145,16 +145,10 @@ class MesaTest < Thor
                     flags: claim_flags(modes), mesa: m)
           end
 
-          # run test
+          say_step(shell, "Testing #{t.mod}/#{t.test_name}")
           started = Time.now
           t.do_one
-
-          # bail out if not submitting
-          return unless options[:submit]
-
-          # submit results
-          shell.say 'Submitting results to ' + s.base_uri + '... ', :blue
-          submit_result(s, m, t, started)
+          finish_test(s, m, t, started, submit: options[:submit])
         else
           # Each test is claimed as it starts and submitted as it finishes.
           # (`install` reports the build.)
@@ -163,7 +157,6 @@ class MesaTest < Thor
         end
       end
     end
-    shell.say "Done.\n", :green
   end
 
   desc 'submit [TEST CASE]', 'submit a test case or commit'
@@ -175,7 +168,7 @@ class MesaTest < Thor
     that test's result. Without it, the build status plus every test with
     results from this build (or with --empty, just the build status), in one
     request. Results left over from an earlier build are skipped, and
-    MesaTestHub ignores results it already has, so submitting again is safe.
+    MESATestHub ignores results it already has, so submitting again is safe.
     Needs an API key (see `mesa_test help setup`). Modules are
     searched/concatenated in this order:
 
@@ -216,10 +209,7 @@ class MesaTest < Thor
                                        mod: options[:module].downcase.to_sym)
         raise Thor::Error, "#{t.mod}/#{t.test_name} has no results to submit." unless t.ran?
 
-        # submit results
-        shell.say 'Submitting results to ' + s.base_uri + '... ', :blue
         s.submit_instance(m, t, force_logs: options['force-logs'])
-        shell.say "Done.\n", :green
       else
         # The build status plus (unless --empty) every test with results from
         # this build, in one request. MESATestHub stores it as a build row
@@ -228,9 +218,8 @@ class MesaTest < Thor
         begin
           m.check_installation
         rescue MesaDirError
-          shell.say %q{This MESA installation doesn't seem to be compiled } \
-            'properly. Attempting to submit a compilation failure to '\
-            'MESATestHub.', :red
+          shell.say "This build didn't finish compiling, so only the failed build " \
+                    'will be reported.', :yellow
           empty = true
         end
         s.submit_commit(m, empty: empty, force_logs: options['force-logs'])
@@ -243,7 +232,7 @@ class MesaTest < Thor
   Checks out SHA (default: main) into your work directory (mesa_work in
   ~/.mesa_test/config.yml, or --mesadir), using git worktrees off the mirror
   so MESA's history isn't downloaded again. Doesn't build, doesn't contact
-  MesaTestHub, and doesn't touch your own MESA_DIR or environment.
+  MESATestHub, and doesn't touch your own MESA_DIR or environment.
   LONGDESC
 
   option :mesadir, desc: 'Location of mesa dir, if not relying on config data',
@@ -269,7 +258,7 @@ class MesaTest < Thor
   already there and ignores SHA.
 
   The build is claimed and its result (pass or fail, with the build log)
-  reported to MesaTestHub, which needs an API key (see `mesa_test help
+  reported to MESATestHub, which needs an API key (see `mesa_test help
   setup`). A failed build exits with status 1. --no-submit just builds, for
   local work: nothing is claimed or sent, and no key is needed.
 
@@ -277,7 +266,7 @@ class MesaTest < Thor
   the build and recorded in $MESA_DIR/testhub.yml, so later `mesa_test test`
   runs on this build (e.g. cluster array jobs) apply them automatically.
 
-  If SHA is `best`, MesaTestHub picks the commit this computer should build
+  If SHA is `best`, MESATestHub picks the commit this computer should build
   next, and the run modes come from its request instead: the mode flags then
   say what this computer is *willing* to do (overriding `capabilities` in the
   config file). If nothing needs building, mesa_test exits with status
@@ -293,7 +282,7 @@ class MesaTest < Thor
   option :mesadir, desc: 'Location of mesa dir, if not relying on config data',
                    type: :string
   option :submit, desc: 'Report the build (claim it first, then submit its ' \
-                        'status) to MesaTestHub. --no-submit just builds, ' \
+                        'status) to MESATestHub. --no-submit just builds, ' \
                         'e.g. for local testing.',
                   type: :boolean, default: true
   claim_option
@@ -367,7 +356,7 @@ class MesaTest < Thor
   Run modes (--skip-optional, --fpe, --converge) apply to the build and
   every test; unset ones are left to your shell's environment.
 
-  If SHA is `best`, MesaTestHub picks the commit (one this computer hasn't
+  If SHA is `best`, MESATestHub picks the commit (one this computer hasn't
   tested yet) and the run modes (FPE checks, plus full inlists or a
   convergence run if the commit asks for one); everything else is the
   ordinary run above. The mode flags then say what this computer is
@@ -385,7 +374,7 @@ class MesaTest < Thor
   option :force, desc: 'Use ~/.mesa_test/config.yml as it is. --no-force ' \
                        'shows it and asks you to confirm (or fix) it first.',
                  type: :boolean, default: true, aliases: '-f'
-  option :submit, desc: 'Submit results (if any) to MesaTestHub.',
+  option :submit, desc: 'Submit results (if any) to MESATestHub.',
                   type: :boolean, default: true
   option :module, desc: 'Which module to test and/or submit, if applicable.',
                   type: :string, default: 'all', aliases: '-m'
@@ -456,9 +445,9 @@ class MesaTest < Thor
     end
   end
 
-  desc 'request_work', 'ask MesaTestHub what this computer should do next'
+  desc 'request_work', 'ask MESATestHub what this computer should do next'
   long_desc <<-LONGDESC
-  Asks MesaTestHub which commit this computer should build next (or, with
+  Asks MESATestHub which commit this computer should build next (or, with
   --scope=test --sha=SHA, which test to run next on a commit it built) and
   prints the recommendation as JSON on STDOUT, including the run modes to
   use and the reasons it was picked. The mode flags say what this computer
@@ -488,13 +477,13 @@ class MesaTest < Thor
     which is where the other commands look).
 
     mesa_test authenticates with a per-computer API key. To get one, log in
-    to MesaTestHub, open My Computers, open this computer's page (adding the
+    to MESATestHub, open My Computers, open this computer's page (adding the
     computer first if needed; one used only for `search` and `count` is
     fine), and click "Generate key". The key starts with mth_. Paste it when
     the wizard asks, or export MESATESTHUB_API_KEY, which overrides the
     config file (e.g. to keep the key off disk on a cluster).
 
-    The wizard checks the key with MesaTestHub, which also supplies this
+    The wizard checks the key with MESATestHub, which also supplies this
     computer's name. Then it asks which optional test modes the computer is
     willing to run when a commit asks for them (full_inlists, fpe, converge),
     the logs token, and where the MESA mirror and work directory live.
@@ -506,7 +495,7 @@ class MesaTest < Thor
 
   desc 'search "QUERY"', 'retrieve JSON test instances matching QUERY'
   long_desc <<-LONGDESC
-  Sends a GET request to the MesaTestHub search API. QUERY should be
+  Sends a GET request to the MESATestHub search API. QUERY should be
   quoted. Authenticates with your API key; a key for any of your computers
   works, since search is read-only.
 
@@ -542,7 +531,7 @@ class MesaTest < Thor
 
   private
 
-  # `install_and_test best`: MesaTestHub picks the commit, then each test.
+  # `install_and_test best`: MESATestHub picks the commit, then each test.
   def install_and_test_best
     unless options[:submit]
       raise Thor::Error, '`install_and_test best` submits as it goes; ' \
@@ -572,7 +561,7 @@ class MesaTest < Thor
 
     # Report the build on its own; this also fulfills the build claim.
     build_submitted = submit_build(s, m)
-    # MesaTestHub chose the commit and its modes; from here it's an ordinary
+    # MESATestHub chose the commit and its modes; from here it's an ordinary
     # whole-suite run, as `install_and_test SHA` does it: MESA's order,
     # --jobs at a time, each test claimed as it starts and submitted as it
     # finishes.
@@ -626,9 +615,8 @@ class MesaTest < Thor
                 "(#{jobs} in all).", :yellow
     else
       idle = budget - each * jobs
-      note = idle.positive? ? "; #{idle} left idle" : ''
-      shell.say "Up to #{jobs} tests at a time, #{each} thread#{'s' unless each == 1} each " \
-                "(#{source} ÷ #{jobs}#{note}). Use --test-threads to set it yourself.", :blue
+      @thread_note = "#{source} split #{jobs} ways#{"; #{idle} left idle" if idle.positive?}; " \
+                     '--test-threads sets it directly'
     end
     each
   end
@@ -647,11 +635,9 @@ class MesaTest < Thor
   # run's result. Its claim is left to lapse, which tells the hub the work
   # was abandoned. Returns whether a result went through.
   def submit_result(s, m, t, started)
-    unless t.ran_since?(started)
-      shell.say "#{t.mod}/#{t.test_name} wrote no results; nothing submitted.", :red
-      return false
-    end
-    s.submit_instance(m, t, force_logs: options['force-logs'])
+    return false unless t.ran_since?(started)
+
+    s.submit_instance(m, t, force_logs: options['force-logs'], quiet: true)
   end
 
   # Check numeric options before anything is checked out or built, so a
@@ -699,7 +685,13 @@ class MesaTest < Thor
     tests = tests_for(m, mod)
     sha = m.sha
     claiming = submit && options[:claim]
-    shell.say "Running #{tests.size} tests, #{jobs} at a time.", :blue if jobs > 1
+    if jobs > 1
+      threads = test_thread_env['OMP_NUM_THREADS'] || ENV['OMP_NUM_THREADS']
+      say_step(shell, "Testing #{tests.size} tests, #{jobs} at a time" \
+                      "#{", #{threads} thread#{'s' unless threads == '1'} each" if threads}")
+      shell.say "(#{@thread_note})" if @thread_note
+      shell.say "Each test's output goes to each_test_run.log in its directory."
+    end
     lock = Mutex.new
     done = 0
     all_submitted = true
@@ -710,15 +702,17 @@ class MesaTest < Thor
         end
       end
       started = Time.now
-      jobs > 1 ? t.run_isolated : t.do_one
+      if jobs > 1
+        t.run_isolated
+      else
+        say_step(shell, "[#{lock.synchronize { done } + 1}/#{tests.size}] Testing #{t.mod}/#{t.test_name}")
+        t.do_one
+      end
       lock.synchronize do
         done += 1
-        report_test(t, started, "[#{done}/#{tests.size}]")
-        if submit
-          # (not `&&=` on the call: that would skip every later submission)
-          submitted = submit_result(s, m, t, started)
-          all_submitted &&= submitted
-        end
+        # (not `&&=` on the call: that would skip every later submission)
+        submitted = finish_test(s, m, t, started, submit: submit, prefix: "[#{done}/#{tests.size}] ")
+        all_submitted &&= submitted
       end
     end
     if jobs > 1
@@ -729,34 +723,58 @@ class MesaTest < Thor
     all_submitted
   end
 
-  # One progress line for a finished test, from its testhub.yml.
-  def report_test(t, started, prefix)
-    outcome = begin
-      t.ran? ? (t.passed? ? 'pass' : 'FAIL') : 'no result'
-    rescue StandardError
-      'no result'
+  # Submit a finished test (with +submit+) and print its one progress line:
+  #   [12/107] star/1M_pre_ms_to_wd passed in 41.2 min, submitted
+  # Only the outcome is colored. Returns whether the result went in (true
+  # when not submitting).
+  def finish_test(s, m, t, started, submit:, prefix: '')
+    elapsed = format_duration(Time.now - started)
+    unless t.ran_since?(started)
+      line = "#{prefix}#{t.mod}/#{t.test_name} #{shell.set_color('wrote no results', :red)} " \
+             "after #{elapsed}"
+      shell.say(submit ? "#{line}; nothing submitted" : line)
+      return !submit
     end
-    shell.say format('%s %s/%s: %s (%.1f min)', prefix, t.mod, t.test_name, outcome,
-                     (Time.now - started) / 60.0), outcome == 'pass' ? :green : :red
+
+    passed = begin
+      t.passed?
+    rescue StandardError
+      false
+    end
+    outcome = passed ? shell.set_color('passed', :green) : shell.set_color('FAILED', :red)
+    submitted = submit ? submit_result(s, m, t, started) : true
+    suffix = if !submit then ''
+             elsif submitted then ', submitted'
+             else ", #{shell.set_color('not submitted', :red)}"
+             end
+    shell.say "#{prefix}#{t.mod}/#{t.test_name} #{outcome} in #{elapsed}#{suffix}"
+    submitted
+  end
+
+  def format_duration(seconds)
+    if seconds < 90 then format('%d s', seconds.round)
+    elsif seconds < 2 * 3600 then format('%.1f min', seconds / 60.0)
+    else format('%.1f h', seconds / 3600.0)
+    end
   end
 
 
   # clean + install +m+ with +modes+ in the environment, then record the
   # modes in $MESA_DIR/testhub.yml for later `test`/`submit` runs.
   def build_with_modes(m, modes, raise_on_failure: false)
+    say_step(shell, "Building MESA #{short_sha(m.sha)}" \
+                    "#{" (#{describe_modes(modes)})" unless modes.empty?}")
     with_env(run_mode_env(modes).merge(build_thread_env)) do
       m.clean
       m.install
     end
   rescue MesaDirError
-    shell.say "\nFailed in compiling MESA.", :red
+    shell.say "MESA #{short_sha(m.sha)} failed to build; see #{File.join(m.mesa_dir, 'build.log')}.", :red
     raise if raise_on_failure
   else
+    # Recorded so later `mesa_test test` runs on this build use the same modes.
     m.record_run_modes(modes)
-    shell.say "\nSuccessfully compiled MESA commit #{m.sha}.", :green
-    unless modes.empty?
-      shell.say "Recorded run modes for this build: #{describe_modes(modes)}.", :blue
-    end
+    shell.say "Built MESA #{short_sha(m.sha)}.", :green
   end
 
   # Run modes given explicitly on the command line (unset flags omitted).
@@ -806,8 +824,8 @@ class MesaTest < Thor
     shell_factor = ENV['MESA_TEST_SUITE_RESOLUTION_FACTOR']
     if recorded[:resolution_factor] && !explicit.key?(:resolution_factor) && shell_factor &&
        shell_factor.to_f != recorded[:resolution_factor].to_f
-      warn "This build was set up for resolution factor #{recorded[:resolution_factor]}; " \
-           "using it instead of your MESA_TEST_SUITE_RESOLUTION_FACTOR=#{shell_factor}."
+      warn_yellow "This build was set up for resolution factor #{recorded[:resolution_factor]}; " \
+                  "using it instead of your MESA_TEST_SUITE_RESOLUTION_FACTOR=#{shell_factor}."
     end
     recorded.merge(explicit)
   end
@@ -831,7 +849,7 @@ class MesaTest < Thor
     end.join(', ')
   end
 
-  # Optional modes this computer is willing to run for MesaTestHub: the
+  # Optional modes this computer is willing to run for MESATestHub: the
   # config file's `capabilities`, overridden by any mode flag given.
   def capabilities_for(s)
     caps = s.capabilities.dup
@@ -853,11 +871,12 @@ class MesaTest < Thor
   def dispatch_or_exit(s, scope:, sha: nil, capabilities: capabilities_for(s))
     rec = s.dispatch(scope: scope, sha: sha, capabilities: capabilities)
     if rec.nil?
-      $stderr.puts 'MesaTestHub has nothing more for this computer to ' \
+      $stderr.puts 'MESATestHub has nothing for this computer to ' \
                    "#{scope == 'build' ? 'build' : 'test on this commit'} right now."
     elsif scope == 'build'
-      $stderr.puts "MesaTestHub suggests #{rec['short_sha']} on #{rec['branch']}: " \
-                   "#{Array(rec['reasons']).join('; ')}"
+      # (the hub's first reason is usually "on <branch>", already said)
+      reasons = Array(rec['reasons']) - ["on #{rec['branch']}"]
+      $stderr.puts "MESATestHub picked #{rec['short_sha']} on #{rec['branch']}: #{reasons.join('; ')}"
     end
     rec
   rescue TestHubError => e
@@ -914,7 +933,7 @@ class MesaTest < Thor
     end
   end
 
-  # hub: true for commands that talk to MesaTestHub, which all need an API
+  # hub: true for commands that talk to MESATestHub, which all need an API
   # key; checked first, before any checkout or build.
   def create_submitter(force: true, hub: false)
     s = case MODE

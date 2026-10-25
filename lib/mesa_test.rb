@@ -84,14 +84,6 @@ class MesaTestSubmitter
       "files it uses are cached in the mirror repo to save time later. " \
       "(#{s.mesa_work}):", :blue
       s.mesa_work = response unless response.empty?
-
-      # Get platform information
-      response = shell.ask 'What is the platform of this computer (eg. ' \
-        "macOS, Ubuntu)? (#{s.platform}):", :blue
-      s.platform = response unless response.empty?
-      response = shell.ask 'What is the version of the platform (eg. 10.15.5, ' \
-        "Ubuntu 16.04)? (#{s.platform_version}):", :blue
-      s.platform_version = response unless response.empty?
     end
 
     # Confirm data. If not confirmed, restart whole wizard.
@@ -162,8 +154,8 @@ class MesaTestSubmitter
   # (`[ci optional]`, `[ci fpe]`, `[ci converge]`), in MESATestHub's names.
   CAPABILITIES = %i[full_inlists fpe converge].freeze
 
-  attr_accessor :computer_name, :user_name, :platform,
-                :mesa_mirror, :mesa_work, :platform_version, :processor,
+  attr_accessor :computer_name, :user_name,
+                :mesa_mirror, :mesa_work, :processor,
                 :config_file, :base_uri, :github_protocol, :logs_token,
                 :capabilities
   attr_writer :api_key
@@ -173,7 +165,7 @@ class MesaTestSubmitter
   # many defaults are set in body
   def initialize(
       computer_name: nil, user_name: nil, github_protocol: nil,
-      mesa_mirror: nil, platform: nil, platform_version: nil, processor: nil,
+      mesa_mirror: nil, processor: nil,
       config_file: nil, base_uri: nil, logs_token: nil
   )
     @computer_name = computer_name || Socket.gethostname.scan(/^[^\.]+\.?/)[0]
@@ -184,18 +176,6 @@ class MesaTestSubmitter
       File.join(ENV['HOME'], '.mesa_test', 'mirror')
     @mesa_work = mesa_work ||
       File.join(ENV['HOME'], '.mesa_test', 'work')
-    @platform = platform
-    if @platform.nil?
-      @platform =
-        if OS.osx?
-          'macOS'
-        elsif OS.linux?
-          'Linux'
-        else
-          ''
-        end
-    end
-    @platform_version = platform_version || ''
     @processor = processor || ''
     @config_file = config_file || File.join(ENV['HOME'], '.mesa_test',
                                             'config.yml')
@@ -264,7 +244,7 @@ class MesaTestSubmitter
     puts "GitHub Protocol         #{github_protocol}"
     puts "MESA Mirror Location    #{mesa_mirror}"
     puts "MESA Work Location      #{mesa_work}"
-    puts "Platform                #{platform} #{platform_version}"
+    puts "OS (detected each run)  #{platform_version}"
     # puts "Config location         #{config_file}"
     puts '-------------------------------------------------------'
     puts ''
@@ -272,12 +252,6 @@ class MesaTestSubmitter
     response.strip.casecmp('y').zero?
   end
 
-  # For one "computer" on the web server, and for [subjective] consistency
-  # reasons, the platform, processor, and RAM cannot be changed! If you
-  # change platforms (i.e. switch from mac to linux, or change between linux
-  # flavors), you should create a new computer account. Similarly, create new
-  # computer accounts if you change your RAM or processor. You do not need
-  # to change computers if you upgrade your platform (macOS 10.12 -> 10.13
   def save_computer_data
     data_hash = {
       'computer_name' => computer_name,
@@ -286,9 +260,7 @@ class MesaTestSubmitter
       'logs_token' => logs_token,
       'github_protocol' => github_protocol,
       'mesa_mirror' => mesa_mirror,
-      'mesa_work' => mesa_work,
-      'platform' => platform,
-      'platform_version' => platform_version,
+      'mesa_work' => mesa_work
     }
     # make sure there's a directory to write to
     unless dir_or_symlink_exists? File.dirname(config_file)
@@ -312,8 +284,45 @@ class MesaTestSubmitter
     @github_protocol = (data_hash['github_protocol'] || @github_protocol).to_sym
     @mesa_mirror = data_hash.fetch('mesa_mirror', @mesa_mirror)
     @mesa_work = data_hash.fetch('mesa_work', @mesa_work)
-    @platform = data_hash.fetch('platform', @platform)
-    @platform_version = data_hash.fetch('platform_version', @platform_version)
+  end
+
+  # This computer's OS version, detected (once per run) rather than
+  # configured, since a typed-in value goes stale with the first OS update.
+  # MESATestHub shows it after the computer's platform (macOS / linux), so
+  # macOS sends just the number and Linux the distribution:
+  # "27.0.1", "Rocky Linux 8.10", "Ubuntu 24.04 (WSL)".
+  def platform_version
+    @platform_version ||= self.class.detect_platform_version
+  end
+
+  def self.detect_platform_version
+    version = OS.mac? ? `sw_vers -productVersion 2>/dev/null`.strip : linux_version
+    version = `uname -sr 2>/dev/null`.strip if version.to_s.empty?
+    version
+  rescue StandardError
+    `uname -sr 2>/dev/null`.strip rescue ''
+  end
+
+  # The freedesktop os-release standard (every current distribution, and
+  # containers; /usr/lib/os-release is its fallback location):
+  # NAME="Rocky Linux", VERSION_ID="8.10". Rolling releases (Arch) have no
+  # VERSION_ID. RHEL/CentOS 6 predate it but have /etc/redhat-release.
+  def self.linux_version
+    path = %w[/etc/os-release /usr/lib/os-release].find { |f| File.readable?(f) }
+    name =
+      if path
+        os = File.readlines(path, chomp: true)
+                 .map { |line| line.split('=', 2) }.select { |kv| kv.size == 2 }
+                 .to_h { |k, v| [k.strip, v.strip.delete('"\'')] }
+        [os['NAME'], os['VERSION_ID']].compact.join(' ')
+      elsif File.readable?('/etc/redhat-release')
+        # "CentOS release 6.10 (Final)"
+        File.read('/etc/redhat-release').strip.sub(/ \(.*\)\z/, '')
+      end
+    return name if name.to_s.empty?
+
+    wsl = File.readable?('/proc/version') && File.read('/proc/version').match?(/microsoft/i)
+    wsl ? "#{name} (WSL)" : name
   end
 
   # Parameters to be submitted in JSON format for reporting information about

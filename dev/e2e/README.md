@@ -43,7 +43,8 @@ Scenarios:
 | `parallel-best` | `install_and_test best --jobs 2` with `OMP_NUM_THREADS=8`. Checks: threads split to 4 per test, at most 2 at once, never one test twice at once, all runs submitted, requests met. |
 | `install` | `install SHA --no-submit` (nothing claimed or sent), `install` (build claimed, reported, claim fulfilled), and a failed build (reported with `compiled: false`, exit 1). |
 | `submit-split` | `install --no-submit`, `test --no-submit` (nothing claimed or sent), then a plain `submit`: one request, stored by the hub as a build row plus one per test. Repeating `submit` stores nothing new (fingerprints), and results older than the build are skipped. |
-| `nothing` | Runs against a stub hub that always answers "nothing to do" (no testhub needed). Checks: `install best`, `install_and_test best`, and `request_work` exit 3 without creating the work directory or claiming anything. An unreachable hub must fail some other way, so scripts can tell "nothing to do" from "couldn't ask". |
+| `no-result` | A test that dies before writing results: the run continues, it isn't submitted (nor an older leftover `testhub.yml` on a rerun), and its claim is left to lapse. |
+| `nothing` | Runs against a stub hub that always answers "nothing to do" (no testhub needed). Checks: `install best`, `install_and_test best`, and `request_work` exit 3 without creating the work directory or claiming anything; a bad `--jobs` fails before checkout. An unreachable hub must fail some other way, so scripts can tell "nothing to do" from "couldn't ask". |
 | `legacy` | Email + password, explicit SHA, whole suite. Checks: the build status is submitted on its own, then each test is claimed as it starts and submitted as it finishes (results roll in, never one bulk submission), and `count` works. |
 
 The testhub server must run from the same checkout as `TESTHUB_DIR` so

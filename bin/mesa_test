@@ -115,6 +115,7 @@ class MesaTest < Thor
   parallel_options
 
   def test(test_case_name = nil)
+    validate_options!
     s = if options[:submit]
           create_and_check_submitter(force: options[:force])
         else
@@ -140,14 +141,15 @@ class MesaTest < Thor
           end
 
           # run test
+          started = Time.now
           t.do_one
-  
+
           # bail out if not submitting
           return unless options[:submit]
-  
+
           # submit results
           shell.say 'Submitting results to ' + s.base_uri + '... ', :blue
-          s.submit_instance(m, t, force_logs: options['force-logs'])
+          submit_result(s, m, t, started)
         else
           # Each test is claimed as it starts and submitted as it finishes.
           # (`install` reports the build.)
@@ -206,6 +208,8 @@ class MesaTest < Thor
   
         t = create_and_check_test_case(mesa: m, test_case_name: test_case_name,
                                        mod: options[:module].downcase.to_sym)
+        raise Thor::Error, "#{t.mod}/#{t.test_name} has no results to submit." unless t.ran?
+
         # submit results
         shell.say 'Submitting results to ' + s.base_uri + '... ', :blue
         s.submit_instance(m, t, force_logs: options['force-logs'])
@@ -296,6 +300,7 @@ class MesaTest < Thor
   build_threads_option
 
   def install(sha = 'main')
+    validate_options!
     # assuming config wizard has already been set (perhaps a little reckless)
     # so that we can get at the work directory and mirror directory
     s = create_submitter(force: true)
@@ -392,6 +397,7 @@ class MesaTest < Thor
   parallel_options
 
   def install_and_test(sha='main')
+    validate_options!
     return install_and_test_best if sha == 'best'
 
     s = if options[:submit]
@@ -599,8 +605,11 @@ class MesaTest < Thor
           s.claim(sha: m.sha, scope: 'test', mod: t.mod, test_case: t.test_name,
                   flags: claim_flags(modes), dispatched_at: rec['dispatched_at'], mesa: m)
         end
+        started = Time.now
         with_env(run_mode_env(modes)) { t.do_one }
-        all_submitted &&= s.submit_instance(m, t, force_logs: options['force-logs'])
+        # (not `&&=`: that would skip submitting every test after a failure)
+        submitted = submit_result(s, m, t, started)
+        all_submitted &&= submitted
       end
     end
     all_submitted
@@ -662,6 +671,33 @@ class MesaTest < Thor
     { 'NPROCS' => n.to_i.to_s, 'OMP_NUM_THREADS' => n.to_i.to_s }
   end
 
+  # Submit the results +t+ wrote during the run that began at +started+.
+  # If it wrote none (each_test_run died early, the run was killed), there
+  # is nothing to report: an older testhub.yml must not be sent as this
+  # run's result. Its claim is left to lapse, which tells the hub the work
+  # was abandoned. Returns whether a result went through.
+  def submit_result(s, m, t, started)
+    unless t.ran_since?(started)
+      shell.say "#{t.mod}/#{t.test_name} wrote no results; nothing submitted.", :red
+      return false
+    end
+    s.submit_instance(m, t, force_logs: options['force-logs'])
+  end
+
+  # Check numeric options before anything is checked out or built, so a
+  # typo fails in a second rather than after a long compile.
+  def validate_options!
+    { jobs: 1, test_threads: 1, build_threads: 1 }.each do |name, min|
+      value = options[name]
+      next if value.nil?
+      next if value.is_a?(Numeric) && value == value.to_i && value >= min
+
+      raise Thor::Error, "--#{name.to_s.tr('_', '-')} must be a whole number of at least #{min}."
+    end
+    explicit_factor
+    nil
+  end
+
   # Report this build's status (and its log, if it failed). Returns whether
   # the report went through; false if there was nothing to report.
   def submit_build(s, m)
@@ -708,7 +744,11 @@ class MesaTest < Thor
       lock.synchronize do
         done += 1
         report_test(t, started, "[#{done}/#{tests.size}]")
-        all_submitted &&= s.submit_instance(m, t, force_logs: options['force-logs']) if submit
+        if submit
+          # (not `&&=` on the call: that would skip every later submission)
+          submitted = submit_result(s, m, t, started)
+          all_submitted &&= submitted
+        end
       end
     end
     if jobs > 1
@@ -799,7 +839,8 @@ class MesaTest < Thor
             if finished
               count += 1
               report_test(t, started, "[#{count}]")
-              all_submitted &&= s.submit_instance(m, t, force_logs: options['force-logs'])
+              submitted = submit_result(s, m, t, started)
+              all_submitted &&= submitted
             end
           end
         end

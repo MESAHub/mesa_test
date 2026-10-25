@@ -465,6 +465,27 @@ SCENARIOS = {
     end
   end,
 
+  # A test that dies before writing results isn't submitted -- neither as
+  # a crash that stops the run nor as an older run's leftover testhub.yml
+  # -- and its claim is left to lapse.
+  'no-result' => lambda do
+    Scenario.new('a test that writes no results', wants: [], auth: :key).run do |s|
+      status, out = s.mesa_test('install_and_test', s.sha, env: { 'FAKE_NO_RESULT' => 'fake_beta' })
+      s.check(status.zero?, "install_and_test exited #{status}")
+      s.check(out.include?('star/fake_beta wrote no results; nothing submitted'), 'no notice for the missing result')
+      r = s.report
+      s.check(r['runs'].map { |run| run['test'] }.sort == %w[binary/fake_gamma star/fake_alpha],
+              "runs: #{r['runs'].map { |run| run['test'] }}")
+      beta = r['claims'].find { |c| c['test'] == 'star/fake_beta' }
+      s.check(beta && beta['status'] == 'pending', "fake_beta's claim: #{beta.inspect}")
+
+      # Rerun fake_alpha so it has a leftover result, then make it fail: the
+      # old testhub.yml must not be sent as the new run's result.
+      s.mesa_test('test', '1', env: { 'FAKE_NO_RESULT' => 'fake_alpha' })
+      s.check(s.report['runs'].size == 2, 'a leftover result was submitted')
+    end
+  end,
+
   # When the hub has nothing for this computer, every dispatching command
   # exits NOTHING_TO_DO_EXIT without touching the work directory or claiming
   # anything -- and an unreachable hub is an ordinary failure, not "nothing
@@ -486,6 +507,12 @@ SCENARIOS = {
       ensure
         hub.stop
       end
+
+      # Bad option values fail before anything is checked out or built.
+      status, out = standalone_mesa_test(dir, 'http://127.0.0.1:9', 'install_and_test', 'main', '--jobs', '0')
+      c.check(status == 1 && out.include?('--jobs must be a whole number'),
+              "--jobs 0 exited #{status.inspect}:\n#{out}")
+      c.check(!File.exist?(File.join(dir, 'work')), 'a bad --jobs still checked out')
 
       closed = TCPServer.new('127.0.0.1', 0)
       port = closed.addr[1]

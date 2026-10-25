@@ -62,6 +62,8 @@ if [ -z "\$1" ]; then
   exit 0
 fi
 name=\$(./list_tests | awk -v n="\$1" '\$1==n {print \$2}')
+# FAKE_NO_RESULT=<name>: that test dies before writing any results
+[ "\$name" = "\$FAKE_NO_RESULT" ] && exit 1
 echo "test $mod/\$name skip_optional=\${MESA_SKIP_OPTIONAL-unset} fpe=\${MESA_FPE_CHECKS_ON:-unset} res=\${MESA_TEST_SUITE_RESOLUTION_FACTOR:-unset}" >> "\$MESA_DIR/../env_log.txt"
 start=\$(perl -MTime::HiRes=time -e 'printf "%.3f", time')
 sleep 1  # long enough for parallel runs to visibly overlap

@@ -510,7 +510,10 @@ can be revoked on its own, so it is the safer thing to store.'
       # logs for the failing tests just submitted (or all, with force_logs)
       tests.each do |test_case|
         if !test_case.passed? || force_logs
-          res &&= submit_test_log(test_case, skip_passing: !force_logs)
+          # (not `res &&= submit_test_log(...)`: after one failed upload that
+          # would skip every remaining test's logs)
+          sent = submit_test_log(test_case, skip_passing: !force_logs)
+          res &&= sent
         end
       end
 
@@ -1370,6 +1373,13 @@ class MesaTestCase
   # Fingerprint of this run's results (a hash of testhub.yml).
   def fingerprint
     file_fingerprint(testhub_file)
+  end
+
+  # Whether this test wrote results at or after +time+, i.e. during the
+  # run that started then (not a testhub.yml left from an earlier run).
+  # mtimes can be whole seconds, so compare at that resolution.
+  def ran_since?(time)
+    ran? && File.mtime(testhub_file) >= time.floor
   end
 
   # rough proxy for whether or not the test has even been run

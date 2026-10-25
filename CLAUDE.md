@@ -89,7 +89,12 @@ MESATestHub can tell a computer what to work on and track what is in flight. The
   - Claims are advisory. Failures are warned about and swallowed, never fatal.
   - The client never stores claim ids. The server fulfills claims by matching computer, commit, and test when the submission arrives.
   - `install`, `test`, and `install_and_test` claim by default; turn it off with `--no-claim`.
-  - Whole-suite runs claim with `all_test_cases: true`, and only when `--module` is `all`.
+  - **No bulk submissions, and claims are just-in-time** (Oct 2026):
+    - Every run reports its build status as soon as the build finishes (an `empty` submission, with the build log on failure).
+    - Each test is claimed right as it starts and submitted right as it finishes, so results roll in and a claim always means "running now".
+    - This applies to `test` (all tests), `install_and_test`, and plain `submit`, which sends the build status plus one submission per test with results. Never `entire: true`.
+    - The hub still accepts bulk submissions from older clients, and its `all_test_cases` claim endpoint remains, but this client no longer uses either.
+    - Serial runs loop over tests in mesa_test (`./each_test_run N` via `do_one`, output on the terminal) rather than calling `./each_test_run` once per module, so per-test submission is possible, and Ctrl-C stops the whole run instead of moving on to the next module.
   - Claims carry the run's environment (`MesaTestSubmitter#claim_environment`), which the hub shows on pending tests. Test claims use the build's `testhub.yml` compiler record. Build claims are made before compiling, so they send only the shell's `MESASDK_VERSION`. Both send `OMP_NUM_THREADS` and the config's `platform_version`.
 - **Run modes are recorded in the work dir.**
   - `install` appends a `mesa_test_run_modes:` block (`fpe`, `skip_optional`, `resolution_factor`) to `$MESA_DIR/testhub.yml`, after the compiler keys MESA's install writes. See `Mesa#record_run_modes` / `#recorded_run_modes`.
@@ -120,7 +125,7 @@ MESATestHub can tell a computer what to work on and track what is in flight. The
   - With none set, behavior is exactly as before: serial `./each_test_run` per module, in the shell's environment.
   - Parallel tests run via `MesaTestCase#run_isolated`: one `./each_test_run <n>` subprocess each, with its own `chdir:` and env, output in `each_test_run.log` in the test dir. `#do_one` / `visit_dir` change the process-wide cwd and ENV, so they're unsafe across threads.
   - The worker pool is `run_workers` / `parallel_each` in lib.
-  - Whole-suite runs still end with one `entire` submission, so nothing changes on the hub.
+  - Parallel runs submit each test as it finishes, like serial runs (see "No bulk submissions" above).
   - `install_and_test best --jobs N` runs N dispatch→claim→run→submit workers, with dispatch+claim under one lock. The hub won't hand out a test this computer holds a claim on, so no test runs twice at once. A worker that gets 204 waits while others are busy (their results can open more work) and stops once all are idle.
   - Ctrl-C kills the worker threads first (so nothing half-run is submitted), then each test's process group; exit 130.
 - **Capabilities:** the optional modes a computer can run live in config under `capabilities: [full_inlists, fpe, converge]`, set in the setup wizard. Override per run with the mode flags.

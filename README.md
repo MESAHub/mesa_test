@@ -61,6 +61,11 @@ too, and `install_and_test best` hands each of its `--jobs` workers its own
 test. Each test's output goes to `each_test_run.log` in its directory, and
 mesa_test prints a line as each finishes. Ctrl-C stops all running tests.
 
+Whether serial or parallel, results go to MESATestHub as they happen: the
+build status as soon as the build finishes, then each test as soon as it
+finishes. Each test is claimed just as it starts, so the hub shows exactly
+what's running.
+
 ## Run modes
 
 `--skip-optional` / `--no-skip-optional`, `--fpe` / `--no-fpe`, and

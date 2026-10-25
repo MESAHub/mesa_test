@@ -38,8 +38,12 @@ Scenarios:
 |---|---|
 | `cluster` | `install best` → `submit --empty` → one `test N` per test (array jobs) in a shell with `MESA_SKIP_OPTIONAL` set. Checks: the modes recorded in `testhub.yml` win over the shell; an explicit `test` flag wins over the record, except FPE; all claims fulfilled; requests satisfied. |
 | `best` | `install_and_test best` on an `[ci optional] [ci converge]` commit. Checks: each test runs once per mode and never both at once; then `request_work` exits 3. |
+| `converge-factor` | `install best` on a `[ci converge 0.5]` commit with the shell at 0.9, then array jobs. Checks: the named factor wins (with warnings) at install and in each job, and the request is met. |
+| `parallel` | `install_and_test SHA --jobs 3 --test-threads 2 --build-threads 4`. Checks: build `NPROCS`/`OMP_NUM_THREADS`, tests overlap with 2 threads each, per-test logs, the build status submitted on its own, then each test claimed and submitted individually. |
+| `parallel-best` | `install_and_test best --jobs 2` with `OMP_NUM_THREADS=8`. Checks: threads split to 4 per test, at most 2 at once, never one test twice at once, all runs submitted, requests met. |
+| `submit-split` | `install SHA`, `test --no-submit` (sends nothing), then a plain `submit`. Checks: the build status plus one submission per test, never one bulk submission. |
 | `nothing` | Runs against a stub hub that always answers "nothing to do" (no testhub needed). Checks: `install best`, `install_and_test best`, and `request_work` exit 3 without creating the work directory or claiming anything. An unreachable hub must fail some other way, so scripts can tell "nothing to do" from "couldn't ask". |
-| `legacy` | Email + password, explicit SHA, whole suite in one go. Checks: claims up front, one `entire` submission fulfills them all, and `count` works. |
+| `legacy` | Email + password, explicit SHA, whole suite. Checks: the build status is submitted on its own, then each test is claimed as it starts and submitted as it finishes (results roll in, never one bulk submission), and `count` works. |
 
 The testhub server must run from the same checkout as `TESTHUB_DIR` so
 the fixture tasks and the API agree. Scratch files are deleted after a

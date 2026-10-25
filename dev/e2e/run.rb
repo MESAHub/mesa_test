@@ -99,6 +99,14 @@ class Scenario
     [build, runs]
   end
 
+  # No bulk submissions: exactly one build-status submission (empty) plus
+  # one submission per test, none `entire`.
+  def self.one_build_then_per_test?(submissions)
+    submissions.none? { |sub| sub['entire'] } &&
+      submissions.count { |sub| sub['empty'] } == 1 &&
+      submissions.count { |sub| !sub['empty'] } == TESTS.size
+  end
+
   # Largest number of runs in progress at once.
   def self.max_overlap(runs)
     events = runs.flat_map { |r| [[r[:start], 1], [r[:finish], -1]] }.sort_by { |t, d| [t, d] }
@@ -350,7 +358,8 @@ SCENARIOS = {
 
   # --jobs / --test-threads / --build-threads on a whole-suite run: the
   # build gets NPROCS + OMP_NUM_THREADS, tests run concurrently with their
-  # own thread count and log, and one `entire` submission closes it all.
+  # own thread count and log, the build status is submitted on its own,
+  # and each test is claimed as it starts and submitted as it finishes.
   'parallel' => lambda do
     Scenario.new('install_and_test SHA --jobs 3 (whole suite, parallel)', wants: [], auth: :key).run do |s|
       status, out = s.mesa_test('install_and_test', s.sha, '--jobs', '3', '--test-threads', '2',
@@ -364,8 +373,9 @@ SCENARIOS = {
       logs = Dir[File.join(s.work_dir, '*', 'test_suite', '*', 'each_test_run.log')]
       s.check(logs.size == TESTS.size, "per-test logs: #{logs.size}")
       r = s.report
-      s.check(r['submissions'].map { |sub| sub['entire'] } == [true], "submissions: #{r['submissions']}")
-      s.check(r['claims'].all? { |c| c['status'] == 'fulfilled' }, "claims: #{r['claims']}")
+      s.check(Scenario.one_build_then_per_test?(r['submissions']), "submissions: #{r['submissions']}")
+      s.check(r['claims'].size == 1 + TESTS.size && r['claims'].all? { |c| c['status'] == 'fulfilled' },
+              "claims: #{r['claims']}")
     end
   end,
 
@@ -393,6 +403,25 @@ SCENARIOS = {
       s.check(r['claims'].all? { |c| c['status'] == 'fulfilled' }, "claims: #{r['claims']}")
       s.check(r['runs'].size == 2 * TESTS.size, "hub saw #{r['runs'].size} runs")
       s.check(r['satisfied']['optional'] && r['satisfied']['converge'], "requests: #{r['satisfied']}")
+    end
+  end,
+
+  # `test` (all tests) and a later plain `submit` also never send a bulk
+  # submission: `test --no-submit` sends nothing at all, then `submit` sends
+  # the build status and one submission per test with results.
+  'submit-split' => lambda do
+    Scenario.new('test --no-submit, then submit (no bulk submission)', wants: [], auth: :key).run do |s|
+      s.mesa_test('install', s.sha, '--no-claim')
+      status, = s.mesa_test('test', '--no-submit')
+      s.check(status.zero?, "test --no-submit exited #{status}")
+      s.check(tests_logged(s).size == TESTS.size, "runs: #{tests_logged(s)}")
+      s.check(s.report['submissions'].empty?, '--no-submit submitted something')
+
+      status, = s.mesa_test('submit')
+      s.check(status.zero?, "submit exited #{status}")
+      r = s.report
+      s.check(Scenario.one_build_then_per_test?(r['submissions']), "submissions: #{r['submissions']}")
+      s.check(r['runs'].size == TESTS.size, "hub saw #{r['runs'].size} runs")
     end
   end,
 
@@ -428,18 +457,24 @@ SCENARIOS = {
     check
   end,
 
-  # Old-style whole-suite run with email + password and an explicit SHA:
-  # still works, claims everything up front, one submission fulfills it all.
+  # Whole-suite run with email + password and an explicit SHA: the build
+  # status goes in on its own, then each test is claimed as it starts and
+  # submitted as it finishes (no bulk submission).
   'legacy' => lambda do
     Scenario.new('install_and_test SHA with email + password', wants: [], auth: :password).run do |s|
-      status, = s.mesa_test('install_and_test', s.sha, '--no-skip-optional',
-                            env: { 'MESA_SKIP_OPTIONAL' => 't' })
+      status, out = s.mesa_test('install_and_test', s.sha, '--no-skip-optional',
+                                env: { 'MESA_SKIP_OPTIONAL' => 't' })
       s.check(status.zero?, "install_and_test exited #{status}")
+      # Results roll in: the first test is submitted before the last starts.
+      first_submit = out.index('Successfully submitted instance')
+      last_start = out.rindex('Testing ')
+      s.check(first_submit && last_start && first_submit < last_start,
+              'tests were not submitted as they finished')
       runs = tests_logged(s)
       s.check(runs.size == TESTS.size && runs.all? { |l| l.include?('skip_optional=unset') },
               "--no-skip-optional not applied: #{runs}")
       r = s.report
-      s.check(r['submissions'].map { |sub| sub['entire'] } == [true], "submissions: #{r['submissions']}")
+      s.check(Scenario.one_build_then_per_test?(r['submissions']), "submissions: #{r['submissions']}")
       s.check(r['claims'].size == 1 + TESTS.size && r['claims'].all? { |c| c['status'] == 'fulfilled' },
               "claims: #{r['claims']}")
 

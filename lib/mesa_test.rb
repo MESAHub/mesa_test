@@ -296,25 +296,33 @@ class MesaTestSubmitter
   end
 
   def self.detect_platform_version
-    version =
-      if OS.mac?
-        `sw_vers -productVersion 2>/dev/null`.strip
-      elsif File.readable?('/etc/os-release')
-        # The freedesktop standard (every current distribution, and
-        # containers): NAME="Rocky Linux", VERSION_ID="8.10". Rolling
-        # releases (Arch) have no VERSION_ID.
-        os = File.readlines('/etc/os-release', chomp: true)
-                 .map { |line| line.split('=', 2) }.select { |kv| kv.size == 2 }
-                 .to_h { |k, v| [k, v.delete('"\'')] }
-        name = [os['NAME'], os['VERSION_ID']].compact.join(' ')
-        wsl = File.readable?('/proc/version') &&
-              File.read('/proc/version').match?(/microsoft/i)
-        wsl && !name.empty? ? "#{name} (WSL)" : name
-      end
+    version = OS.mac? ? `sw_vers -productVersion 2>/dev/null`.strip : linux_version
     version = `uname -sr 2>/dev/null`.strip if version.to_s.empty?
     version
   rescue StandardError
-    ''
+    `uname -sr 2>/dev/null`.strip rescue ''
+  end
+
+  # The freedesktop os-release standard (every current distribution, and
+  # containers; /usr/lib/os-release is its fallback location):
+  # NAME="Rocky Linux", VERSION_ID="8.10". Rolling releases (Arch) have no
+  # VERSION_ID. RHEL/CentOS 6 predate it but have /etc/redhat-release.
+  def self.linux_version
+    path = %w[/etc/os-release /usr/lib/os-release].find { |f| File.readable?(f) }
+    name =
+      if path
+        os = File.readlines(path, chomp: true)
+                 .map { |line| line.split('=', 2) }.select { |kv| kv.size == 2 }
+                 .to_h { |k, v| [k.strip, v.strip.delete('"\'')] }
+        [os['NAME'], os['VERSION_ID']].compact.join(' ')
+      elsif File.readable?('/etc/redhat-release')
+        # "CentOS release 6.10 (Final)"
+        File.read('/etc/redhat-release').strip.sub(/ \(.*\)\z/, '')
+      end
+    return name if name.to_s.empty?
+
+    wsl = File.readable?('/proc/version') && File.read('/proc/version').match?(/microsoft/i)
+    wsl ? "#{name} (WSL)" : name
   end
 
   # Parameters to be submitted in JSON format for reporting information about

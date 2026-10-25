@@ -52,37 +52,32 @@ class MesaTestSubmitter
       # Optional run modes this computer can serve when MESATestHub asks for
       # them (see `mesa_test request_work` and `install_and_test best`)
       current = s.capabilities.select { |_, on| on }.keys.join(', ')
-      response = shell.ask 'Which optional test modes can this computer ' \
-        'run when a commit asks for them? Any of: full_inlists, fpe, ' \
-        "converge, separated by commas, or 'none'. " \
-        "(#{current.empty? ? 'none' : current}):", :blue
-      s.capabilities = parse_capabilities(response) unless response.strip.empty?
+      response = question('Which optional test modes can this computer run when a ' \
+                          'commit asks for them? Any of: full_inlists, fpe, converge, ' \
+                          "separated by commas, or 'none'.", current.empty? ? 'none' : current)
+      s.capabilities = parse_capabilities(response) unless response.empty?
 
       # Get API key for submitting failure logs
-      response = shell.ask 'What is your token for uploading failure logs to ' \
-        "the logs server? (if you don't have one, ask a MESA testing " \
-        'maintainer or a representative from Flatiron for a key) ' \
-        "(#{s.logs_token}):", :blue
+      response = question('What is your token for uploading failure logs to the logs ' \
+                          "server? (If you don't have one, ask a MESA testing maintainer " \
+                          'or a representative from Flatiron for a key.)', s.logs_token)
       s.logs_token = response unless response.empty?
 
       # Determine if we'll use ssh or https to access github
-      response = shell.ask 'When accessing GitHub, which protocol do you '\
-        'want to use?', :blue, limited_to: %w[ssh https],
-        default: s.github_protocol.to_s
+      shell.say 'When accessing GitHub, which protocol do you want to use?', :blue
+      response = shell.ask '>', limited_to: %w[ssh https], default: s.github_protocol.to_s
       s.github_protocol = response.strip.downcase.to_sym
 
       # Get location of source MESA repo (the mirror)
-      response = shell.ask "Where is/should your mirrored MESA repository " \
-      "located? This is where a mirror will be stored from which test " \
-      "repos will be generated. You won't touch this in regular operation. " \
-      "(#{s.mesa_mirror}):", :blue
+      response = question('Where is/should your mirrored MESA repository be? This is ' \
+                          'where a mirror will be stored from which test repos will be ' \
+                          "generated. You won't touch this in regular operation.", s.mesa_mirror)
       s.mesa_mirror = response unless response.empty?
 
       # Get location of source MESA work (where testing happens)
-      response = shell.ask "Where is/should your working directory for "\
-      "testing be located? This is where testing actually occurs, but all "\
-      "files it uses are cached in the mirror repo to save time later. " \
-      "(#{s.mesa_work}):", :blue
+      response = question('Where is/should your working directory for testing be? This ' \
+                          'is where testing actually occurs, but all files it uses are ' \
+                          'cached in the mirror repo to save time later.', s.mesa_work)
       s.mesa_work = response unless response.empty?
     end
 
@@ -95,6 +90,17 @@ class MesaTestSubmitter
     end
   end
 
+  # Ask one wizard question; returns the stripped answer, '' to keep
+  # +current+. The question goes out through `say`, which the terminal
+  # wraps normally; the prompt that Readline draws stays a short, plain
+  # "> ". Readline counts color codes as visible characters, so a long or
+  # colored prompt garbles at the terminal's edge (the start of the line
+  # repeats before it wraps).
+  def question(text, current = nil)
+    shell.say(current.to_s.empty? ? text : "#{text} (current: #{current})", :blue)
+    shell.ask('>').to_s.strip
+  end
+
   # Ask for the API key until MESATestHub accepts one, and take the computer
   # name from it, since a key belongs to exactly one computer. If the hub
   # can't be reached, keep the key and ask for the name instead.
@@ -104,9 +110,9 @@ class MesaTestSubmitter
         shell.say "Using the API key in MESATESTHUB_API_KEY (#{s.masked_api_key}). " \
                   'Unset it to enter one here.', :yellow
       else
-        response = shell.ask 'What is the MESATestHub API key for this ' \
-          "computer? (#{s.masked_api_key || 'none'}):", :blue
-        s.api_key = response.strip unless response.strip.empty?
+        response = question('What is the MESATestHub API key for this computer?',
+                            s.masked_api_key || 'none')
+        s.api_key = response unless response.empty?
         next shell.say('An API key is required.', :red) unless s.api_key
       end
 
@@ -117,8 +123,7 @@ class MesaTestSubmitter
         return
       elsif check['reachable'] == false
         shell.say 'Saving the key unverified.', :yellow
-        response = shell.ask 'What is the name of this computer on ' \
-          "MESATestHub? (#{s.computer_name}):", :blue
+        response = question('What is the name of this computer on MESATestHub?', s.computer_name)
         s.computer_name = response unless response.empty?
         return
       end

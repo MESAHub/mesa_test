@@ -176,6 +176,25 @@ The built `.gem` is sometimes checked in alongside the gemspec (see `mesa_test-1
 
 Otherwise there is no automated test suite. Validation is manual: flip `MODE` to `:development` or `:staging`, point at a local MESATestHub, and exercise the CLI against a real MESA checkout. Don't add fake unit tests just because they're conventional — the value here is end-to-end against an actual MESA install and testhub instance.
 
+## Output
+
+Terminal output follows a few rules (Oct 2026), so color carries meaning:
+
+- **Green:** MESA work succeeded (a build, a passing test) or a standalone `submit` went in.
+- **Red:** something failed (a build, a test, a refused submission, an unreachable hub).
+- **Yellow:** a warning. The run continues, but the user may want to act: an ignored flag, a factor mismatch, no logs token, stale results skipped.
+  - STDERR warnings use `warn_yellow`, so `request_work`'s JSON stays clean.
+- **Blue:** only setup-wizard questions.
+- **Bold:** a step heading, via `say_step` (one blank line, then the heading): "Checking out main", "Building MESA abc1234 (FPE checks on)", "Testing 107 tests, 4 at a time".
+- **Plain:** everything else. Never color plumbing; directory changes, `MESA_DIR` swaps, and routine git commands aren't printed at all (a failure names the command).
+- **One line per finished test:** `[3/107] star/x passed in 41.2 min, submitted` (`finish_test`), with only the outcome word colored. Submissions made inside a run are quiet (`submit_instance(quiet: true)`); the progress line says "submitted".
+- **Short SHAs** (`short_sha`, 7 characters, as the hub shows them). No leading `"\n"` inside messages; blank lines come only from `say_step` and the wizard.
+- **Wizard questions** go through `question`: the text via `say`, then a bare `>` prompt.
+  - Readline draws `ask`'s prompt and counts color codes as visible characters, so a long or colored prompt garbles where it wraps.
+- **Logs-server problems are warnings and never fail a submission;** the results are already in. A missing logs token is mentioned once per run.
+
+To see output as a user would, run the e2e harness with `E2E_KEEP=1` and wrap mesa_test in a pseudo-terminal (`script -q /dev/null ruby …`), since Thor only colors on a TTY.
+
 ## Conventions worth knowing
 
 - The library uses bare `bash_execute` / `bashticks` helpers (bottom of [lib/mesa_test.rb](lib/mesa_test.rb)) to force commands through `bash -c`, because MESA's build scripts assume bash.

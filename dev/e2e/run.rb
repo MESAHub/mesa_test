@@ -391,7 +391,7 @@ SCENARIOS = {
       s.check(build == 'build nprocs=4 omp=4', "build threads: #{build.inspect}")
       s.check(runs.size == TESTS.size && runs.all? { |r| r[:omp] == '2' }, "runs: #{runs}")
       s.check(Scenario.max_overlap(runs) >= 2, "tests didn't overlap: #{runs}")
-      s.check(out.scan(/\[\d+\/#{TESTS.size}\] \S+: pass/).size == TESTS.size, 'missing per-test progress lines')
+      s.check(out.scan(/\[\d+\/#{TESTS.size}\] \S+ passed in /).size == TESTS.size, 'missing per-test progress lines')
       logs = Dir[File.join(s.work_dir, '*', 'test_suite', '*', 'each_test_run.log')]
       s.check(logs.size == TESTS.size, "per-test logs: #{logs.size}")
       r = s.report
@@ -413,11 +413,11 @@ SCENARIOS = {
       _, runs = s.timing
       # No --test-threads: the shell's 8 is split across the 2 jobs.
       s.check(runs.all? { |r| r[:omp] == '4' }, "per-test threads: #{runs.map { |r| r[:omp] }.uniq}")
-      s.check(out.include?('2 tests at a time, 4 threads each (OMP_NUM_THREADS=8 ÷ 2)'),
+      s.check(out.include?('2 at a time, 4 threads each') && out.include?('(OMP_NUM_THREADS=8 split 2 ways'),
               'no message about the thread split')
       s.check(runs.size == TESTS.size, "expected #{TESTS.size} runs, got #{runs.size}")
       s.check(Scenario.max_overlap(runs) == 2, "max concurrent runs: #{Scenario.max_overlap(runs)}")
-      s.check(!out.include?('nothing more'), "polled the hub for tests:\n#{out}")
+      s.check(!out.include?('nothing for this computer'), "polled the hub for tests:\n#{out}")
       same_test_overlap = runs.group_by { |r| r[:test] }.values.any? { |rs| Scenario.max_overlap(rs) > 1 }
       s.check(!same_test_overlap, 'one test ran twice at the same time')
       s.check(tests_logged(s).none? { |l| l.include?('skip_optional=unset') && !l.include?('res=unset') },
@@ -492,7 +492,7 @@ SCENARIOS = {
     Scenario.new('a test that writes no results', wants: [], auth: :key).run do |s|
       status, out = s.mesa_test('install_and_test', s.sha, env: { 'FAKE_NO_RESULT' => 'fake_beta' })
       s.check(status.zero?, "install_and_test exited #{status}")
-      s.check(out.include?('star/fake_beta wrote no results; nothing submitted'), 'no notice for the missing result')
+      s.check(out.match?(/star\/fake_beta wrote no results after .*; nothing submitted/), 'no notice for the missing result')
       r = s.report
       s.check(r['runs'].map { |run| run['test'] }.sort == %w[binary/fake_gamma star/fake_alpha],
               "runs: #{r['runs'].map { |run| run['test'] }}")
@@ -564,7 +564,7 @@ SCENARIOS = {
                                 env: key.merge('MESA_SKIP_OPTIONAL' => 't'))
       s.check(status.zero?, "install_and_test exited #{status}")
       # Results roll in: the first test is submitted before the last starts.
-      first_submit = out.index('Successfully submitted instance')
+      first_submit = out.index(', submitted')
       last_start = out.rindex('Testing ')
       s.check(first_submit && last_start && first_submit < last_start,
               'tests were not submitted as they finished')

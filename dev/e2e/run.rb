@@ -119,6 +119,11 @@ class Scenario
     File.join(@dir, 'work')
   end
 
+  def edit_config(changes)
+    path = File.join(home, '.mesa_test', 'config.yml')
+    File.write(path, config.merge(changes).to_yaml)
+  end
+
   def config
     YAML.safe_load(File.read(File.join(home, '.mesa_test', 'config.yml')), permitted_classes: [Symbol])
   end
@@ -573,7 +578,10 @@ SCENARIOS = {
   # password.
   'setup' => lambda do
     Scenario.new('setup wizard', wants: [], auth: :password).run do |s|
-      answers = ['mth_not_a_real_key', s.fixture['api_key'], 'fpe, converge', '', 'https',
+      s.edit_config('logs_token' => 'old-logs-token', 'github_protocol' => 'ssh')
+      # Enter keeps every other answer: the protocol, logs token, and
+      # directories come from the old config.
+      answers = ['mth_not_a_real_key', s.fixture['api_key'], 'fpe, converge', '', '',
                  '', '', '', '', 'y'].join("\n") + "\n"
       status, out = s.mesa_test('setup', stdin: answers)
       c = s.config
@@ -583,6 +591,9 @@ SCENARIOS = {
       s.check(c['api_key'] == s.fixture['api_key'] && c['computer_name'] == s.fixture['computer'] &&
               c['capabilities'] == %w[fpe converge], "config: #{c}")
       s.check(!c.key?('password') && !c.key?('email'), "old credentials kept: #{c.keys}")
+      s.check(c['logs_token'] == 'old-logs-token' && c['github_protocol'] == :ssh &&
+              c['mesa_work'] == s.work_dir && c['platform_version'] == 'e2e',
+              "old settings not kept: #{c}")
     end
   end
 }.freeze

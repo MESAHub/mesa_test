@@ -67,7 +67,8 @@ class MesaTestSubmitter
 
       # Determine if we'll use ssh or https to access github
       response = shell.ask 'When accessing GitHub, which protocol do you '\
-        'want to use?', :blue, limited_to: %w[ssh https]
+        'want to use?', :blue, limited_to: %w[ssh https],
+        default: s.github_protocol.to_s
       s.github_protocol = response.strip.downcase.to_sym
 
       # Get location of source MESA repo (the mirror)
@@ -145,6 +146,9 @@ class MesaTestSubmitter
   )
     new_submitter = new(config_file: config_file, base_uri: base_uri)
     if force_setup
+      # Start the wizard from the current settings, including a 1.x
+      # config's (logs token, directories), so upgrading keeps them.
+      new_submitter.load_computer_data if File.exist? config_file
       new_submitter.setup
     elsif not File.exist? config_file
       puts "No such config file #{config_file}. Starting setup wizard."
@@ -295,17 +299,21 @@ class MesaTestSubmitter
     File.chmod(0o600, config_file)
   end
 
+  # A setting missing from the file (e.g. capabilities in a 1.x config)
+  # keeps its default.
   def load_computer_data
-    data_hash = YAML.load(File.read(config_file))
-    @computer_name = data_hash['computer_name']
-    @api_key = data_hash['api_key']
-    @capabilities = parse_capabilities(Array(data_hash['capabilities']).join(','))
-    @logs_token = data_hash['logs_token']
-    @github_protocol = data_hash['github_protocol'].to_sym
-    @mesa_mirror = data_hash['mesa_mirror']
-    @mesa_work = data_hash['mesa_work']
-    @platform = data_hash['platform']
-    @platform_version = data_hash['platform_version']
+    data_hash = YAML.load(File.read(config_file)) || {}
+    @computer_name = data_hash.fetch('computer_name', @computer_name)
+    @api_key = data_hash.fetch('api_key', @api_key)
+    if data_hash.key?('capabilities')
+      @capabilities = parse_capabilities(Array(data_hash['capabilities']).join(','))
+    end
+    @logs_token = data_hash['logs_token'] || @logs_token
+    @github_protocol = (data_hash['github_protocol'] || @github_protocol).to_sym
+    @mesa_mirror = data_hash.fetch('mesa_mirror', @mesa_mirror)
+    @mesa_work = data_hash.fetch('mesa_work', @mesa_work)
+    @platform = data_hash.fetch('platform', @platform)
+    @platform_version = data_hash.fetch('platform_version', @platform_version)
   end
 
   # Parameters to be submitted in JSON format for reporting information about

@@ -290,7 +290,9 @@ class MesaTestSubmitter
     unless dir_or_symlink_exists? File.dirname(config_file)
       FileUtils.mkdir_p File.dirname(config_file)
     end
-    File.open(config_file, 'w') { |f| f.write(YAML.dump(data_hash)) }
+    # Owner-only: the file holds the API key and logs token.
+    File.write(config_file, YAML.dump(data_hash), perm: 0o600)
+    File.chmod(0o600, config_file)
   end
 
   def load_computer_data

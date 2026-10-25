@@ -23,7 +23,7 @@ fills in the computer's name from it. Alternatively, export
 `MESATESTHUB_API_KEY`, which overrides the config file and keeps the key off
 disk (handy on clusters).
 
-Since version 1.3, mesa_test no longer signs in with your email and password.
+Since version 2.0, mesa_test no longer signs in with your email and password.
 If you're upgrading, run `mesa_test setup` once: it keeps your other
 settings, asks for the key and the optional test modes this computer will
 run, and drops the stored password from `~/.mesa_test/config.yml`.

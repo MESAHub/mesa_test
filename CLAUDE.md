@@ -70,7 +70,7 @@ This is an intentionally minimal gem — no Bundler scaffolding, no Rakefile, no
 - [lib/mesa_test.rb](lib/mesa_test.rb) — All library code in a single file.
 - [mesa_test.gemspec](mesa_test.gemspec) — Lists `lib/mesa_test.rb` as the only library file. If you add new library files you must also list them here.
 
-Runtime dependencies (from gemspec): `thor ~> 1.3.0`, `json ~> 2.0`, `os ~> 1.0`. Ruby `>= 2.0.0`.
+Runtime dependencies (from gemspec): `thor ~> 1.3.0`, `json ~> 2.0`, `os ~> 1.0`. Ruby `>= 2.7.0` (`filter_map`).
 
 ## Core classes in lib/mesa_test.rb
 
@@ -136,8 +136,8 @@ MESATestHub can tell a computer what to work on and track what is in flight. The
 Two different servers are involved:
 
 1. **MESATestHub** — JSON API. URI selected by `MesaTestSubmitter::DEFAULT_URI` = `https://testhub.mesastar.org`.
-   - **Auth: a per-computer API key, required since 1.3.** Config `api_key`, or `MESATESTHUB_API_KEY` in the environment, which wins. Sent as `Authorization: Bearer mth_…` on every request, via `MesaTestSubmitter#testhub_headers`.
-     - The client no longer knows email or password at all: they're neither asked for, stored, nor sent, and re-running `setup` drops them from an old config. The hub still accepts them, so 1.2.x clients keep working.
+   - **Auth: a per-computer API key, required since 2.0.** Config `api_key`, or `MESATESTHUB_API_KEY` in the environment, which wins. Sent as `Authorization: Bearer mth_…` on every request, via `MesaTestSubmitter#testhub_headers`.
+     - The client no longer knows email or password at all: they're neither asked for, stored, nor sent, and re-running `setup` drops them from an old config. The hub still accepts them, so 1.x clients keep working.
      - Every command that talks to the hub calls `require_api_key!` first (via `create_submitter(hub: true)`), before any checkout or build, and fails with `API_KEY_HELP`, which explains how to get a key.
      - The setup wizard asks for the key first and checks it with `check_computer`, which answers with the key's computer name, so the wizard doesn't ask for the name. It asks for the name only if the hub can't be reached.
      - The `submitter` block carries just `computer` + `platform_version`. The name is a cross-check: the hub refuses a key that belongs to another computer.

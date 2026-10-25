@@ -1,11 +1,11 @@
 Gem::Specification.new do |s|
   s.name = 'mesa_test'
-  s.version = '1.2.1'
+  s.version = '2.0.0'
   s.author = 'William Wolf'
-  s.date = '2026-05-29'
+  s.date = '2026-10-24'
   s.description = 'mesa_test is a command-line interface for running the ' \
     'test suites in MESA and submitting them to the companion website ' \
-    'MESATestHub.'
+    'MESATestHub, which can also choose what each computer tests next.'
   s.summary = 'Command line tool for running and reporting the MESA test ' \
     'suites.'
   s.email = 'wolfwm@uwec.edu'
@@ -17,5 +17,5 @@ Gem::Specification.new do |s|
   s.bindir = 'bin'
   s.executables = ['mesa_test']
   s.license = 'MIT'
-  s.required_ruby_version = '>= 2.0.0'
+  s.required_ruby_version = '>= 2.7.0'
 end
